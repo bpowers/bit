@@ -36,7 +36,7 @@ func testTable(t *testing.T, keys []string, extra []string) {
 	}
 	table := Build(entries)
 	for i, key := range keys {
-		n := table.MaybeLookup(key)
+		n := table.MaybeLookupString(key)
 		if int(n) != i {
 			t.Errorf("Lookup(%s): got n=%d; want %d", key, n, i)
 		}
@@ -68,7 +68,7 @@ func BenchmarkTable(b *testing.B) {
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
 		j := i % len(words)
-		n := benchTable.MaybeLookup(string(words[j].Key))
+		n := benchTable.MaybeLookupString(string(words[j].Key))
 		if n != uint64(j) {
 			b.Fatal("bad result index")
 		}
@@ -83,7 +83,7 @@ func BenchmarkFlatTable(b *testing.B) {
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
 		j := i % len(words)
-		n := benchFlatTable.MaybeLookup(string(words[j].Key))
+		n := benchFlatTable.MaybeLookupString(string(words[j].Key))
 		if n != uint64(j) {
 			b.Fatal("bad result index")
 		}

@@ -108,9 +108,13 @@ func nextPow2(n int) int {
 	return 1 << (32 - bits.LeadingZeros32(uint32(n)))
 }
 
-// MaybeLookup searches for s in t and returns its index and whether it was found.
-func (t *Table) MaybeLookup(s string) uint64 {
-	b := s2b(s)
+// MaybeLookupString searches for s in t and returns its potential index.
+func (t *Table) MaybeLookupString(s string) uint64 {
+	return t.MaybeLookup(s2b(s))
+}
+
+// MaybeLookup searches for b in t and returns its potential index.
+func (t *Table) MaybeLookup(b []byte) uint64 {
 	i0 := uint32(farm.Hash64WithSeed(b, 0)) & t.level0Mask
 	seed := uint64(t.level0[i0])
 	i1 := uint32(farm.Hash64WithSeed(b, seed)) & t.level1Mask
@@ -230,8 +234,13 @@ func NewFlatTable(path string) (*FlatTable, error) {
 	}, nil
 }
 
-func (t *FlatTable) MaybeLookup(s string) uint64 {
-	b := s2b(s)
+// MaybeLookupString searches for b in t and returns its potential index.
+func (t *FlatTable) MaybeLookupString(s string) uint64 {
+	return t.MaybeLookup(s2b(s))
+}
+
+// MaybeLookup searches for b in t and returns its potential index.
+func (t *FlatTable) MaybeLookup(b []byte) uint64 {
 	i0 := uint64(uint32(farm.Hash64WithSeed(b, 0)) & t.level0Mask)
 	seed := uint64(binary.LittleEndian.Uint32(t.level0[i0*4 : i0*4+4]))
 	i1 := uint64(uint32(farm.Hash64WithSeed(b, seed)) & t.level1Mask)

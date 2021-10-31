@@ -5,6 +5,7 @@
 package bit
 
 import (
+	"bytes"
 	"errors"
 	"fmt"
 	"os"
@@ -129,12 +130,26 @@ func New(dataPath string) (*Table, error) {
 }
 
 func (t *Table) GetString(key string) ([]byte, bool) {
-	off := t.idx.MaybeLookup(key)
+	off := t.idx.MaybeLookupString(key)
 	expectedKey, value, err := t.data.Read(off)
 	if err != nil {
 		return nil, false
 	}
 	if string(expectedKey) != key {
+		// this is expected: if we call GetString with a key that doesn't exist
+		// we hit this
+		return nil, false
+	}
+	return value, true
+}
+
+func (t *Table) Get(key []byte) ([]byte, bool) {
+	off := t.idx.MaybeLookup(key)
+	expectedKey, value, err := t.data.Read(off)
+	if err != nil {
+		return nil, false
+	}
+	if !bytes.Equal(expectedKey, key) {
 		// this is expected: if we call GetString with a key that doesn't exist
 		// we hit this
 		return nil, false
