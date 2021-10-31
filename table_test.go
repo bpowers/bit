@@ -87,15 +87,22 @@ func openTestFile(path string) (*Table, map[string]string, error) {
 		_ = f.Close()
 	}()
 
-	dataFile, err := os.CreateTemp("", "bit.*.data")
+	dataFile, err := os.CreateTemp("", "bit-test.*.data")
 	if err != nil {
 		return nil, nil, err
 	}
 	defer func() {
 		_ = os.Remove(dataFile.Name())
+		_ = os.Remove(dataFile.Name() + ".index")
 	}()
+	if err = dataFile.Close(); err != nil {
+		return nil, nil, err
+	}
+	if err = os.Remove(dataFile.Name()); err != nil {
+		return nil, nil, err
+	}
 
-	builder, err := NewBuilder(dataFile)
+	builder, err := NewBuilder(dataFile.Name())
 	if err != nil {
 		return nil, nil, err
 	}

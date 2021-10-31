@@ -8,12 +8,14 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"path/filepath"
 
 	"github.com/bpowers/bit/internal/dataio"
 	"github.com/bpowers/bit/internal/index"
 )
 
 type Builder struct {
+	resultPath   string
 	dataFile     *os.File
 	dioWriter    *dataio.Writer
 	indexEntries []index.Entry
@@ -25,15 +27,26 @@ var (
 	errorDuplicateKey = errors.New("duplicate keys aren't supported")
 )
 
-func NewBuilder(dataFile *os.File) (*Builder, error) {
+func NewBuilder(dataFilePath string) (*Builder, error) {
+	// we want to write to a new file and do an atomic rename when we're done on disk
+	dataFilePath, err := filepath.Abs(dataFilePath)
+	if err != nil {
+		return nil, fmt.Errorf("filepath.Abs: %e", err)
+	}
+	dir := filepath.Dir(dataFilePath)
+	dataFile, err := os.CreateTemp(dir, "bit-builder.*.data")
+	if err != nil {
+		return nil, fmt.Errorf("CreateTemp failed (may need permissions for dir containing dataFile): %e", err)
+	}
 	w, err := dataio.NewWriter(dataFile)
 	if err != nil {
 		return nil, fmt.Errorf("dataio.NewWriter: %e", err)
 	}
 	return &Builder{
-		dataFile:  dataFile,
-		dioWriter: w,
-		indexKeys: make(stringSet),
+		resultPath: dataFilePath,
+		dataFile:   dataFile,
+		dioWriter:  w,
+		indexKeys:  make(stringSet),
 	}, nil
 }
 
@@ -62,23 +75,34 @@ func (b *Builder) Finalize() (*Table, error) {
 	if err := b.dioWriter.Close(); err != nil {
 		return nil, fmt.Errorf("recordio.Close: %e", err)
 	}
-	dataPath := b.dataFile.Name()
+	if err := os.Rename(b.dataFile.Name(), b.resultPath); err != nil {
+		return nil, fmt.Errorf("os.Rename: %e", err)
+	}
 	b.dataFile = nil
+	dataPath := b.resultPath
 
 	idx := index.Build(b.indexEntries)
-	idxFilePath := dataPath + ".idx"
-
-	f, err := os.Create(idxFilePath)
+	finalIndexPath := dataPath + ".index"
+	f, err := os.CreateTemp(filepath.Dir(dataPath), "bit-builder.*.index")
 	if err != nil {
-		return nil, fmt.Errorf("os.Create(%s): %e", idxFilePath, err)
+		return nil, fmt.Errorf("os.CreateTemp: %e", err)
 	}
-	defer func() {
-		_ = f.Sync()
-		_ = f.Close()
-	}()
 
 	if err := idx.Write(f); err != nil {
+		_ = f.Close()
+		_ = os.Remove(f.Name())
 		return nil, fmt.Errorf("idx.Write: %e", err)
+	}
+
+	if err = f.Sync(); err != nil {
+		return nil, err
+	}
+	if err = f.Close(); err != nil {
+		return nil, err
+	}
+
+	if err = os.Rename(f.Name(), finalIndexPath); err != nil {
+		return nil, fmt.Errorf("os.Rename: %e", err)
 	}
 
 	return New(dataPath)
@@ -94,7 +118,7 @@ func New(dataPath string) (*Table, error) {
 	if err != nil {
 		return nil, fmt.Errorf("dataio.NewMMapReaderWithPath(%s): %e", dataPath, err)
 	}
-	idx, err := index.NewFlatTable(dataPath + ".idx")
+	idx, err := index.NewFlatTable(dataPath + ".index")
 	if err != nil {
 		return nil, fmt.Errorf("index.NewFlatTable: %e", err)
 	}
