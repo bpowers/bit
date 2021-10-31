@@ -11,13 +11,15 @@ import (
 	"io"
 	"os"
 
+	"github.com/dgryski/go-farm"
+
 	"github.com/bpowers/bit/internal/exp/mmap"
 )
 
 const (
 	magicDataHeader    = 0xC0FFEE0D
 	defaultBufferSize  = 4 * 1024 * 1024
-	recordHeaderSize   = 4 // 32-bit record length
+	recordHeaderSize   = 4 + 4 // 32-bit record length + 32-bit checksum of the value
 	maximumKeyLength   = 256
 	maximumValueLength = 1 << 24
 )
@@ -68,6 +70,10 @@ func (w *Writer) writeHeader() error {
 	return nil
 }
 
+func padLen(b []byte) uint64 {
+	return (8 - (uint64(len(b)) % 8)) % 8
+}
+
 func (w *Writer) Write(key, value []byte) (off uint64, err error) {
 	off = w.off
 	if len(key) > maximumKeyLength {
@@ -77,11 +83,11 @@ func (w *Writer) Write(key, value []byte) (off uint64, err error) {
 		return 0, fmt.Errorf("value length %d greater than %d", len(value), maximumValueLength)
 	}
 
-	// checksum := uint32(farm.Hash64(record))
+	checksum := uint32(farm.Hash64(value))
 	var header [recordHeaderSize]byte
 	packedSize := (uint32(len(value)) << 8) | (uint32(len(key)) & 0xff)
-	// binary.LittleEndian.PutUint32(header[:4], checksum)
-	binary.LittleEndian.PutUint32(header[:], packedSize)
+	binary.LittleEndian.PutUint32(header[:4], checksum)
+	binary.LittleEndian.PutUint32(header[4:], packedSize)
 	headerWritten, err := w.w.Write(header[:])
 	if err != nil {
 		return 0, fmt.Errorf("bufio.Write 1: %e", err)
@@ -90,11 +96,27 @@ func (w *Writer) Write(key, value []byte) (off uint64, err error) {
 	if err != nil {
 		return 0, fmt.Errorf("bufio.Write 2: %e", err)
 	}
+	// zeroed buffer used as padding
+	var zeroBuf [8]byte
+	keyPadLen := padLen(key)
+	keyPadWritten, err := w.w.Write(zeroBuf[:keyPadLen])
+	if err != nil {
+		return 0, fmt.Errorf("bufio.Write 3: %e", err)
+	}
 	valueWritten, err := w.w.Write(value)
 	if err != nil {
 		return 0, fmt.Errorf("bufio.Write 3: %e", err)
 	}
-	w.off += uint64(headerWritten + keyWritten + valueWritten)
+	valuePadLen := padLen(value)
+	valuePadWritten, err := w.w.Write(zeroBuf[:valuePadLen])
+	if err != nil {
+		return 0, fmt.Errorf("bufio.Write 3: %e", err)
+	}
+	recordLen := uint64(headerWritten + keyWritten + keyPadWritten + valueWritten + valuePadWritten)
+	if recordLen%8 != 0 {
+		panic(fmt.Errorf("invariant broken: expected record to be 64-bit aligned, but has length %d", recordLen))
+	}
+	w.off += recordLen
 	err = nil
 	return
 }
@@ -151,20 +173,21 @@ func (r *Reader) Read(off uint64) (key, value []byte, err error) {
 	header := m[off : off+recordHeaderSize]
 	// bounds check elimination
 	_ = header[recordHeaderSize-1]
-	// expectedChecksum := binary.LittleEndian.Uint32(header[:4])
-	packedLen := uint64(binary.LittleEndian.Uint32(header[:]))
+	expectedChecksum := binary.LittleEndian.Uint32(header[:4])
+	packedLen := uint64(binary.LittleEndian.Uint32(header[4:]))
 	valueLen := packedLen >> 8
 	keyLen := packedLen & 0xff
 	if off+recordHeaderSize+valueLen+keyLen > uint64(mLen) {
 		return nil, nil, fmt.Errorf("off %d + keyLen %d + valueLen %d beyond bounds (%d)", off, keyLen, valueLen, mLen)
 	}
 	key = m[off+recordHeaderSize : off+recordHeaderSize+keyLen]
-	value = m[off+recordHeaderSize+keyLen : off+recordHeaderSize+keyLen+valueLen]
+	paddedKeyLen := uint64((len(key) + 7) & (-8))
+	value = m[off+recordHeaderSize+paddedKeyLen : off+recordHeaderSize+paddedKeyLen+valueLen]
 	// bounds check elimination
-	// _ = value[valueLen-1]
-	// checksum := uint32(farm.Hash64(record))
-	// if expectedChecksum != checksum {
-	//	return nil, fmt.Errorf("off %d checksum failed (%d != %d): data file corrupted", off, expectedChecksum, checksum)
-	//}
+	_ = value[valueLen-1]
+	checksum := uint32(farm.Hash64(value))
+	if expectedChecksum != checksum {
+		return nil, nil, fmt.Errorf("off %d checksum failed (%d != %d): data file corrupted", off, expectedChecksum, checksum)
+	}
 	return key, value, nil
 }
