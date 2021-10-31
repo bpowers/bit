@@ -37,16 +37,8 @@ func loadBenchTable() {
 		panic(err)
 	}
 
-	benchHashmap = make(map[string]string)
-	benchEntries = make([]benchEntry, 0, len(expected))
 	for k, v := range expected {
 		benchEntries = append(benchEntries, benchEntry{Key: k, Value: v})
-		keyBuf = make([]byte, len(k))
-		copy(keyBuf, k)
-		valueBuf = make([]byte, len(v))
-		copy(valueBuf, v)
-		// attempt to ensure the hashmap doesn't share memory with our test oracle
-		benchHashmap[string(keyBuf)] = string(valueBuf)
 	}
 }
 
@@ -164,10 +156,7 @@ func TestTableLarge(t *testing.T) {
 }
 
 func BenchmarkTable(b *testing.B) {
-	benchTableOnce.Do(loadBenchTable)
-
 	b.ReportAllocs()
-	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
 		j := i % len(benchEntries)
 		entry := benchEntries[j]
@@ -179,10 +168,8 @@ func BenchmarkTable(b *testing.B) {
 }
 
 func BenchmarkHashmap(b *testing.B) {
-	benchTableOnce.Do(loadBenchTable)
 
 	b.ReportAllocs()
-	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
 		j := i % len(benchEntries)
 		entry := benchEntries[j]
@@ -190,5 +177,19 @@ func BenchmarkHashmap(b *testing.B) {
 		if !ok || value != entry.Value {
 			b.Fatal("bad data or lookup")
 		}
+	}
+}
+
+func init() {
+	benchTableOnce.Do(loadBenchTable)
+
+	benchHashmap = make(map[string]string)
+	for _, entry := range benchEntries {
+		keyBuf = make([]byte, len(entry.Key))
+		copy(keyBuf, entry.Key)
+		valueBuf = make([]byte, len(entry.Value))
+		copy(valueBuf, entry.Value)
+		// attempt to ensure the hashmap doesn't share memory with our test oracle
+		benchHashmap[string(keyBuf)] = string(valueBuf)
 	}
 }
