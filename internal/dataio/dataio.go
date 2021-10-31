@@ -96,26 +96,11 @@ func (w *Writer) Write(key, value []byte) (off uint64, err error) {
 	if err != nil {
 		return 0, fmt.Errorf("bufio.Write 2: %e", err)
 	}
-	// zeroed buffer used as padding
-	var zeroBuf [8]byte
-	keyPadLen := padLen(key)
-	keyPadWritten, err := w.w.Write(zeroBuf[:keyPadLen])
-	if err != nil {
-		return 0, fmt.Errorf("bufio.Write 3: %e", err)
-	}
 	valueWritten, err := w.w.Write(value)
 	if err != nil {
 		return 0, fmt.Errorf("bufio.Write 3: %e", err)
 	}
-	valuePadLen := padLen(value)
-	valuePadWritten, err := w.w.Write(zeroBuf[:valuePadLen])
-	if err != nil {
-		return 0, fmt.Errorf("bufio.Write 3: %e", err)
-	}
-	recordLen := uint64(headerWritten + keyWritten + keyPadWritten + valueWritten + valuePadWritten)
-	if recordLen%8 != 0 {
-		panic(fmt.Errorf("invariant broken: expected record to be 64-bit aligned, but has length %d", recordLen))
-	}
+	recordLen := uint64(headerWritten + keyWritten + valueWritten)
 	w.off += recordLen
 	err = nil
 	return
@@ -181,8 +166,7 @@ func (r *Reader) Read(off uint64) (key, value []byte, err error) {
 		return nil, nil, fmt.Errorf("off %d + keyLen %d + valueLen %d beyond bounds (%d)", off, keyLen, valueLen, mLen)
 	}
 	key = m[off+recordHeaderSize : off+recordHeaderSize+keyLen]
-	paddedKeyLen := uint64((len(key) + 7) & (-8))
-	value = m[off+recordHeaderSize+paddedKeyLen : off+recordHeaderSize+paddedKeyLen+valueLen]
+	value = m[off+recordHeaderSize+keyLen : off+recordHeaderSize+keyLen+valueLen]
 	// bounds check elimination
 	_ = value[valueLen-1]
 	checksum := uint32(farm.Hash64(value))
