@@ -76,8 +76,16 @@ func (b *Builder) Finalize() (*Table, error) {
 	if err := b.dioWriter.Close(); err != nil {
 		return nil, fmt.Errorf("recordio.Close: %e", err)
 	}
+	// make the file read-only
+	if err := os.Chmod(b.dataFile.Name(), 0444); err != nil {
+		return nil, fmt.Errorf("os.Chmod(0444): %e", err)
+	}
 	if err := os.Rename(b.dataFile.Name(), b.resultPath); err != nil {
 		return nil, fmt.Errorf("os.Rename: %e", err)
+	}
+	// make the file read-only
+	if err := os.Chmod(b.resultPath, 0444); err != nil {
+		return nil, fmt.Errorf("os.Chmod(0444): %e", err)
 	}
 	b.dataFile = nil
 	dataPath := b.resultPath
@@ -102,8 +110,14 @@ func (b *Builder) Finalize() (*Table, error) {
 		return nil, err
 	}
 
+	if err = os.Chmod(f.Name(), 0444); err != nil {
+		return nil, fmt.Errorf("os.Chmod(0444): %e", err)
+	}
 	if err = os.Rename(f.Name(), finalIndexPath); err != nil {
 		return nil, fmt.Errorf("os.Rename: %e", err)
+	}
+	if err = os.Chmod(finalIndexPath, 0444); err != nil {
+		return nil, fmt.Errorf("os.Chmod(0444): %e", err)
 	}
 
 	return New(dataPath)
