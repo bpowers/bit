@@ -1,0 +1,5 @@
+*~
+/.idea
+/testdata.*large
+/*.profile
+/bit.test
