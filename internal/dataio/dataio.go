@@ -20,6 +20,7 @@ const (
 	magicDataHeader    = 0xC0FFEE0D
 	defaultBufferSize  = 4 * 1024 * 1024
 	recordHeaderSize   = 4 + 4 // 32-bit record length + 32-bit checksum of the value
+	fileHeaderSize     = 128
 	maximumKeyLength   = 256
 	maximumValueLength = 1 << 24
 )
@@ -31,9 +32,10 @@ func (*nopWriter) Write([]byte) (int, error) {
 }
 
 type Writer struct {
-	f   *os.File
-	w   *bufio.Writer
-	off uint64
+	f     *os.File
+	w     *bufio.Writer
+	off   uint64
+	count uint64
 }
 
 func NewWriter(f *os.File) (*Writer, error) {
@@ -51,7 +53,7 @@ func NewWriter(f *os.File) (*Writer, error) {
 
 func (w *Writer) writeHeader() error {
 	// make the header the minimum cache-width we expect to see
-	var headerBuf [128]byte
+	var headerBuf [fileHeaderSize]byte
 	binary.LittleEndian.PutUint32(headerBuf[:4], magicDataHeader)
 	// current file format version
 	binary.LittleEndian.PutUint32(headerBuf[4:8], 1)
@@ -75,6 +77,7 @@ func padLen(b []byte) uint64 {
 }
 
 func (w *Writer) Write(key, value []byte) (off uint64, err error) {
+	w.count += 1
 	off = w.off
 	if len(key) > maximumKeyLength {
 		return 0, fmt.Errorf("key length %d greater than %d", len(key), maximumKeyLength)
@@ -110,8 +113,15 @@ func (w *Writer) Close() error {
 	if err := w.w.Flush(); err != nil {
 		return fmt.Errorf("bufio.Flush: %e", err)
 	}
-
 	w.w.Reset(&nopWriter{})
+	w.w = nil
+
+	var recordCountBuf [8]byte
+	binary.LittleEndian.PutUint64(recordCountBuf[:], w.count)
+	if _, err := w.f.WriteAt(recordCountBuf[:], 8); err != nil {
+		return fmt.Errorf("f.WriteAt: %e", err)
+	}
+
 	if err := w.f.Sync(); err != nil {
 		return fmt.Errorf("f.Sync: %e", err)
 	}
@@ -124,13 +134,18 @@ func (w *Writer) Close() error {
 }
 
 type Reader struct {
-	mmap *mmap.ReaderAt
+	mmap       *mmap.ReaderAt
+	entryCount uint64
 }
 
 func NewMMapReaderWithPath(path string) (*Reader, error) {
 	m, err := mmap.Open(path)
 	if err != nil {
 		return nil, fmt.Errorf("mmap.Open(%s): %e", path, err)
+	}
+
+	if m.Len() < fileHeaderSize {
+		return nil, fmt.Errorf("data file too short: %d < %d", m.Len(), fileHeaderSize)
 	}
 
 	fileMagic := binary.LittleEndian.Uint32(m.Data()[:4])
@@ -143,8 +158,11 @@ func NewMMapReaderWithPath(path string) (*Reader, error) {
 		return nil, fmt.Errorf("this version of the bit library can only read v1 data files; found v%d", fileFormatVersion)
 	}
 
+	entryCount := binary.LittleEndian.Uint64(m.Data()[8:16])
+
 	r := &Reader{
-		mmap: m,
+		mmap:       m,
+		entryCount: entryCount,
 	}
 	return r, nil
 }

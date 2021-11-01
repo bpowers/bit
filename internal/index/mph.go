@@ -63,7 +63,7 @@ func Build(entries []Entry) *Table {
 	for i, e := range entries {
 		n := uint32(farm.Hash64WithSeed(s2b(e.Key), 0)) & level0Mask
 		sparseBuckets[n] = append(sparseBuckets[n], i)
-		offsets[i] = entries[i].Offset
+		offsets[i] = e.Offset
 	}
 	var buckets []indexBucket
 	for n, vals := range sparseBuckets {
