@@ -85,7 +85,6 @@ func (w *Writer) Write(key, value []byte) (off uint64, err error) {
 	if len(value) > maximumValueLength {
 		return 0, fmt.Errorf("value length %d greater than %d", len(value), maximumValueLength)
 	}
-
 	checksum := uint32(farm.Hash64(value))
 	var header [recordHeaderSize]byte
 	packedSize := (uint32(len(value)) << 8) | (uint32(len(key)) & 0xff)
@@ -165,6 +164,10 @@ func NewMMapReaderWithPath(path string) (*Reader, error) {
 		entryCount: entryCount,
 	}
 	return r, nil
+}
+
+func (r *Reader) Len() uint64 {
+	return r.entryCount
 }
 
 func (r *Reader) Read(off uint64) (key, value []byte, err error) {

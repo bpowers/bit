@@ -47,23 +47,34 @@ func s2b(s string) (b []byte) {
 	return b
 }
 
+type BuildInputer interface {
+	Next() bool
+	Entry() *Entry
+	KeyAt(off uint64) ([]byte, []byte, error) // random access
+	Len() uint64
+}
+
 // Build builds a Table from keys using the "Hash, displace, and compress"
 // algorithm described in http://cmph.sourceforge.net/papers/esa09.pdf.
-func Build(entries []Entry) *Table {
+func Build(in BuildInputer) *Table {
+	entryLen := int(in.Len())
 	var (
-		level0        = make([]uint32, nextPow2(len(entries)/4))
+		level0        = make([]uint32, nextPow2(entryLen/4))
 		level0Mask    = uint32(len(level0) - 1)
-		level1        = make([]uint32, nextPow2(len(entries)))
+		level1        = make([]uint32, nextPow2(entryLen))
 		level1Mask    = uint32(len(level1) - 1)
 		sparseBuckets = make([][]int, len(level0))
 	)
 
-	offsets := make([]uint64, len(entries))
+	offsets := make([]uint64, entryLen)
 
-	for i, e := range entries {
+	i := 0
+	for in.Next() {
+		e := in.Entry()
 		n := uint32(farm.Hash64WithSeed(s2b(e.Key), 0)) & level0Mask
 		sparseBuckets[n] = append(sparseBuckets[n], i)
 		offsets[i] = e.Offset
+		i++
 	}
 	var buckets []indexBucket
 	for n, vals := range sparseBuckets {
@@ -73,14 +84,20 @@ func Build(entries []Entry) *Table {
 	}
 	sort.Sort(bySize(buckets))
 
+	// could be bitset
 	occ := make([]bool, len(level1))
 	var tmpOcc []uint32
 	for _, bucket := range buckets {
-		var seed uint64
+		seed := uint64(1)
 	trySeed:
 		tmpOcc = tmpOcc[:0]
 		for _, i := range bucket.vals {
-			n := uint32(farm.Hash64WithSeed(s2b(entries[i].Key), seed)) & level1Mask
+			key, _, err := in.KeyAt(offsets[i])
+			if err != nil {
+				// TODO: fixme
+				panic(err)
+			}
+			n := uint32(farm.Hash64WithSeed(key, seed)) & level1Mask
 			if occ[n] {
 				for _, n := range tmpOcc {
 					occ[n] = false

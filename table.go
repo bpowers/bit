@@ -90,7 +90,19 @@ func (b *Builder) Finalize() (*Table, error) {
 	b.dataFile = nil
 	dataPath := b.resultPath
 
-	idx := index.Build(b.indexEntries)
+	r, err := dataio.NewMMapReaderWithPath(dataPath)
+	if err != nil {
+		return nil, fmt.Errorf("dataio.NewMMapReaderWithPath(%s): %e", dataPath, err)
+	}
+
+	ii := &indexInput{
+		entries: b.indexEntries,
+		curr:    0,
+		started: false,
+		data:    r,
+	}
+
+	idx := index.Build(ii)
 	finalIndexPath := dataPath + ".index"
 	f, err := os.CreateTemp(filepath.Dir(dataPath), "bit-builder.*.index")
 	if err != nil {
@@ -121,6 +133,37 @@ func (b *Builder) Finalize() (*Table, error) {
 	}
 
 	return New(dataPath)
+}
+
+type indexInput struct {
+	entries []index.Entry
+	curr    int
+	started bool
+	data    *dataio.Reader
+}
+
+func (ii *indexInput) Next() bool {
+	if !ii.started {
+		ii.started = true
+	} else {
+		ii.curr++
+	}
+	return ii.curr < len(ii.entries)
+}
+
+func (ii *indexInput) Len() uint64 {
+	return ii.data.Len()
+}
+
+func (ii *indexInput) Entry() *index.Entry {
+	if ii.curr >= len(ii.entries) {
+		return nil
+	}
+	return &ii.entries[ii.curr]
+}
+
+func (ii *indexInput) KeyAt(off uint64) (key []byte, value []byte, err error) {
+	return ii.data.Read(off)
 }
 
 type Table struct {
