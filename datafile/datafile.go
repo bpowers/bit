@@ -2,7 +2,7 @@
 // Use of this source code is governed by the MIT License
 // that can be found in the LICENSE file.
 
-package dataio
+package datafile
 
 import (
 	"bufio"
@@ -146,7 +146,7 @@ func NewMMapReaderWithPath(path string) (*Reader, error) {
 
 	fileMagic := binary.LittleEndian.Uint32(m.Data()[:4])
 	if fileMagic != magicDataHeader {
-		return nil, fmt.Errorf("bad magic number on data file %s (%x) -- not bit dataio file or corrupted", path, fileMagic)
+		return nil, fmt.Errorf("bad magic number on data file %s (%x) -- not bit datafile or corrupted", path, fileMagic)
 	}
 
 	fileFormatVersion := binary.LittleEndian.Uint32(m.Data()[4:8])
@@ -194,8 +194,8 @@ func (r *Reader) ReadAt(off uint64) (key, value []byte, err error) {
 	return key, value, nil
 }
 
-func (r *Reader) Iter() Iter {
-	return &iter{r: r}
+func (r *Reader) Iter() *Iter {
+	return &Iter{r: r}
 }
 
 type IterItem struct {
@@ -205,21 +205,21 @@ type IterItem struct {
 }
 
 // Iter iterates over the contents in a logfile.  Make sure to `defer it.Close()`.
-type Iter interface {
-	Close()
-	Iter() <-chan IterItem
-	Len() uint64
-	ReadAt(off uint64) (key []byte, value []byte, err error)
-}
+//type Iter interface {
+//	Close()
+//	Iter() <-chan IterItem
+//	Len() uint64
+//	ReadAt(off uint64) (key []byte, value []byte, err error)
+//}
 
-type iter struct {
+type Iter struct {
 	r     *Reader
 	mu    sync.Mutex
 	chans []chan IterItem
 }
 
 // Close cleans up the iterator, closing the iteration channel and freeing resources.
-func (i *iter) Close() {
+func (i *Iter) Close() {
 	i.mu.Lock()
 	defer i.mu.Unlock()
 	for _, ch := range i.chans {
@@ -228,7 +228,7 @@ func (i *iter) Close() {
 	i.chans = nil
 }
 
-func (i *iter) Iter() <-chan IterItem {
+func (i *Iter) Iter() <-chan IterItem {
 	i.mu.Lock()
 	defer i.mu.Unlock()
 	// unbuffered
@@ -238,7 +238,7 @@ func (i *iter) Iter() <-chan IterItem {
 	return ch
 }
 
-func (i *iter) producer(ch chan<- IterItem) {
+func (i *Iter) producer(ch chan<- IterItem) {
 	// we want senders to be able to close the channel, so just swallow the panic
 	defer func() {
 		if recover() != nil {
@@ -263,10 +263,10 @@ func (i *iter) producer(ch chan<- IterItem) {
 	}
 }
 
-func (i *iter) Len() uint64 {
+func (i *Iter) Len() uint64 {
 	return i.r.Len()
 }
 
-func (i *iter) ReadAt(off uint64) (key []byte, value []byte, err error) {
+func (i *Iter) ReadAt(off uint64) (key []byte, value []byte, err error) {
 	return i.r.ReadAt(off)
 }

@@ -2,7 +2,7 @@
 // Use of this source code is governed by the MIT License
 // that can be found in the LICENSE file.
 
-package index
+package indexfile
 
 import (
 	"bufio"
@@ -15,12 +15,11 @@ import (
 	"sort"
 	"unsafe"
 
-	"github.com/bpowers/bit/bitset"
-
-	"github.com/bpowers/bit/internal/dataio"
-	"github.com/bpowers/bit/internal/exp/mmap"
-
 	"github.com/dgryski/go-farm"
+
+	"github.com/bpowers/bit/bitset"
+	"github.com/bpowers/bit/datafile"
+	"github.com/bpowers/bit/internal/exp/mmap"
 )
 
 const (
@@ -57,7 +56,7 @@ func s2b(s string) (b []byte) {
 
 // Build builds a Table from keys using the "Hash, displace, and compress"
 // algorithm described in http://cmph.sourceforge.net/papers/esa09.pdf.
-func Build(it dataio.Iter) *Table {
+func Build(it *datafile.Iter) *Table {
 	entryLen := int(it.Len())
 	var (
 		level0        = make([]uint32, nextPow2(entryLen/4))
@@ -219,7 +218,7 @@ func NewFlatTable(path string) (*FlatTable, error) {
 	m := mm.Data()
 	fileMagic := binary.LittleEndian.Uint32(m[:4])
 	if fileMagic != magicIndexHeader {
-		return nil, fmt.Errorf("bad magic number on data file %s (%x) -- not bit dataio file or corrupted", path, fileMagic)
+		return nil, fmt.Errorf("bad magic number on index file %s (%x) -- not bit indexfile or corrupted", path, fileMagic)
 	}
 
 	fileFormatVersion := binary.LittleEndian.Uint32(m[4:8])

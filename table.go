@@ -11,14 +11,14 @@ import (
 	"os"
 	"path/filepath"
 
-	"github.com/bpowers/bit/internal/dataio"
-	"github.com/bpowers/bit/internal/index"
+	"github.com/bpowers/bit/datafile"
+	"github.com/bpowers/bit/indexfile"
 )
 
 type Builder struct {
 	resultPath string
 	dataFile   *os.File
-	dioWriter  *dataio.Writer
+	dioWriter  *datafile.Writer
 }
 
 var (
@@ -36,9 +36,9 @@ func NewBuilder(dataFilePath string) (*Builder, error) {
 	if err != nil {
 		return nil, fmt.Errorf("CreateTemp failed (may need permissions for dir containing dataFile): %e", err)
 	}
-	w, err := dataio.NewWriter(dataFile)
+	w, err := datafile.NewWriter(dataFile)
 	if err != nil {
-		return nil, fmt.Errorf("dataio.NewWriter: %e", err)
+		return nil, fmt.Errorf("datafile.NewWriter: %e", err)
 	}
 	return &Builder{
 		resultPath: dataFilePath,
@@ -79,12 +79,12 @@ func (b *Builder) Finalize() (*Table, error) {
 	b.dataFile = nil
 	dataPath := b.resultPath
 
-	r, err := dataio.NewMMapReaderWithPath(dataPath)
+	r, err := datafile.NewMMapReaderWithPath(dataPath)
 	if err != nil {
-		return nil, fmt.Errorf("dataio.NewMMapReaderWithPath(%s): %e", dataPath, err)
+		return nil, fmt.Errorf("datafile.NewMMapReaderWithPath(%s): %e", dataPath, err)
 	}
 
-	idx := index.Build(r.Iter())
+	idx := indexfile.Build(r.Iter())
 	finalIndexPath := dataPath + ".index"
 	f, err := os.CreateTemp(filepath.Dir(dataPath), "bit-builder.*.index")
 	if err != nil {
@@ -118,18 +118,18 @@ func (b *Builder) Finalize() (*Table, error) {
 }
 
 type Table struct {
-	data *dataio.Reader
-	idx  *index.FlatTable
+	data *datafile.Reader
+	idx  *indexfile.FlatTable
 }
 
 func New(dataPath string) (*Table, error) {
-	r, err := dataio.NewMMapReaderWithPath(dataPath)
+	r, err := datafile.NewMMapReaderWithPath(dataPath)
 	if err != nil {
-		return nil, fmt.Errorf("dataio.NewMMapReaderWithPath(%s): %e", dataPath, err)
+		return nil, fmt.Errorf("datafile.NewMMapReaderWithPath(%s): %e", dataPath, err)
 	}
-	idx, err := index.NewFlatTable(dataPath + ".index")
+	idx, err := indexfile.NewFlatTable(dataPath + ".index")
 	if err != nil {
-		return nil, fmt.Errorf("index.NewFlatTable: %e", err)
+		return nil, fmt.Errorf("indexfile.NewFlatTable: %e", err)
 	}
 	return &Table{
 		data: r,
