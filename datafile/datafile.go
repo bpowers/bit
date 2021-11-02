@@ -194,8 +194,8 @@ func (r *Reader) ReadAt(off uint64) (key, value []byte, err error) {
 	return key, value, nil
 }
 
-func (r *Reader) Iter() *Iter {
-	return &Iter{r: r}
+func (r *Reader) Iter() Iter {
+	return &iter{r: r}
 }
 
 type IterItem struct {
@@ -205,21 +205,21 @@ type IterItem struct {
 }
 
 // Iter iterates over the contents in a logfile.  Make sure to `defer it.Close()`.
-//type Iter interface {
-//	Close()
-//	Iter() <-chan IterItem
-//	Len() uint64
-//	ReadAt(off uint64) (key []byte, value []byte, err error)
-//}
+type Iter interface {
+	Close()
+	Iter() <-chan IterItem
+	Len() uint64
+	ReadAt(off uint64) (key []byte, value []byte, err error)
+}
 
-type Iter struct {
+type iter struct {
 	r     *Reader
 	mu    sync.Mutex
 	chans []chan IterItem
 }
 
 // Close cleans up the iterator, closing the iteration channel and freeing resources.
-func (i *Iter) Close() {
+func (i *iter) Close() {
 	i.mu.Lock()
 	defer i.mu.Unlock()
 	for _, ch := range i.chans {
@@ -228,7 +228,7 @@ func (i *Iter) Close() {
 	i.chans = nil
 }
 
-func (i *Iter) Iter() <-chan IterItem {
+func (i *iter) Iter() <-chan IterItem {
 	i.mu.Lock()
 	defer i.mu.Unlock()
 	// unbuffered
@@ -238,7 +238,7 @@ func (i *Iter) Iter() <-chan IterItem {
 	return ch
 }
 
-func (i *Iter) producer(ch chan<- IterItem) {
+func (i *iter) producer(ch chan<- IterItem) {
 	// we want senders to be able to close the channel, so just swallow the panic
 	defer func() {
 		if recover() != nil {
@@ -263,10 +263,10 @@ func (i *Iter) producer(ch chan<- IterItem) {
 	}
 }
 
-func (i *Iter) Len() uint64 {
+func (i *iter) Len() uint64 {
 	return i.r.Len()
 }
 
-func (i *Iter) ReadAt(off uint64) (key []byte, value []byte, err error) {
+func (i *iter) ReadAt(off uint64) (key []byte, value []byte, err error) {
 	return i.r.ReadAt(off)
 }

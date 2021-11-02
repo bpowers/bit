@@ -56,7 +56,7 @@ func s2b(s string) (b []byte) {
 
 // Build builds a Table from keys using the "Hash, displace, and compress"
 // algorithm described in http://cmph.sourceforge.net/papers/esa09.pdf.
-func Build(it *datafile.Iter) *Table {
+func Build(it datafile.Iter) *Table {
 	entryLen := int(it.Len())
 	var (
 		level0        = make([]uint32, nextPow2(entryLen/4))
