@@ -16,16 +16,13 @@ import (
 )
 
 type Builder struct {
-	resultPath   string
-	dataFile     *os.File
-	dioWriter    *dataio.Writer
-	indexEntries []index.Entry
-	indexKeys    stringSet
+	resultPath string
+	dataFile   *os.File
+	dioWriter  *dataio.Writer
 }
 
 var (
-	errorKeyTooBig    = errors.New("we only support keys < 256 bytes in length")
-	errorDuplicateKey = errors.New("duplicate keys aren't supported")
+	errorKeyTooBig = errors.New("we only support keys < 256 bytes in length")
 )
 
 func NewBuilder(dataFilePath string) (*Builder, error) {
@@ -47,7 +44,6 @@ func NewBuilder(dataFilePath string) (*Builder, error) {
 		resultPath: dataFilePath,
 		dataFile:   dataFile,
 		dioWriter:  w,
-		indexKeys:  make(stringSet),
 	}, nil
 }
 
@@ -58,12 +54,7 @@ func (b *Builder) Put(k, v []byte) error {
 	}
 	// copy the key (by allocating a string), because it could point into
 	// e.g. a bufio buffer
-	key := string(k)
-	if b.indexKeys.Contains(key) {
-		return errorDuplicateKey
-	}
-	off, err := b.dioWriter.Write(k, v)
-	b.indexEntries = append(b.indexEntries, index.Entry{Key: key, Offset: off})
+	_, err := b.dioWriter.Write(k, v)
 	if err != nil {
 		return err
 	}
@@ -71,8 +62,6 @@ func (b *Builder) Put(k, v []byte) error {
 }
 
 func (b *Builder) Finalize() (*Table, error) {
-	// we're done with this -- nil it so it can be GC'd earlier
-	b.indexKeys = nil
 	if err := b.dioWriter.Close(); err != nil {
 		return nil, fmt.Errorf("recordio.Close: %e", err)
 	}
@@ -95,14 +84,7 @@ func (b *Builder) Finalize() (*Table, error) {
 		return nil, fmt.Errorf("dataio.NewMMapReaderWithPath(%s): %e", dataPath, err)
 	}
 
-	ii := &indexInput{
-		entries: b.indexEntries,
-		curr:    0,
-		started: false,
-		data:    r,
-	}
-
-	idx := index.Build(ii)
+	idx := index.Build(r.Iter())
 	finalIndexPath := dataPath + ".index"
 	f, err := os.CreateTemp(filepath.Dir(dataPath), "bit-builder.*.index")
 	if err != nil {
@@ -135,37 +117,6 @@ func (b *Builder) Finalize() (*Table, error) {
 	return New(dataPath)
 }
 
-type indexInput struct {
-	entries []index.Entry
-	curr    int
-	started bool
-	data    *dataio.Reader
-}
-
-func (ii *indexInput) Next() bool {
-	if !ii.started {
-		ii.started = true
-	} else {
-		ii.curr++
-	}
-	return ii.curr < len(ii.entries)
-}
-
-func (ii *indexInput) Len() uint64 {
-	return ii.data.Len()
-}
-
-func (ii *indexInput) Entry() *index.Entry {
-	if ii.curr >= len(ii.entries) {
-		return nil
-	}
-	return &ii.entries[ii.curr]
-}
-
-func (ii *indexInput) KeyAt(off uint64) (key []byte, value []byte, err error) {
-	return ii.data.Read(off)
-}
-
 type Table struct {
 	data *dataio.Reader
 	idx  *index.FlatTable
@@ -188,7 +139,7 @@ func New(dataPath string) (*Table, error) {
 
 func (t *Table) GetString(key string) ([]byte, bool) {
 	off := t.idx.MaybeLookupString(key)
-	expectedKey, value, err := t.data.Read(off)
+	expectedKey, value, err := t.data.ReadAt(off)
 	if err != nil {
 		return nil, false
 	}
@@ -202,7 +153,7 @@ func (t *Table) GetString(key string) ([]byte, bool) {
 
 func (t *Table) Get(key []byte) ([]byte, bool) {
 	off := t.idx.MaybeLookup(key)
-	expectedKey, value, err := t.data.Read(off)
+	expectedKey, value, err := t.data.ReadAt(off)
 	if err != nil {
 		return nil, false
 	}

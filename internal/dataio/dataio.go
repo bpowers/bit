@@ -10,6 +10,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"sync"
 
 	"github.com/dgryski/go-farm"
 
@@ -62,18 +63,14 @@ func (w *Writer) writeHeader() error {
 	if err != nil {
 		return fmt.Errorf("bufio.Write: %e", err)
 	}
-	if written != 128 {
+	if written != fileHeaderSize {
 		panic("invariant broken")
 	}
 	w.off += uint64(written)
-	if w.off != 128 {
+	if w.off != fileHeaderSize {
 		panic("invariant broken 2")
 	}
 	return nil
-}
-
-func padLen(b []byte) uint64 {
-	return (8 - (uint64(len(b)) % 8)) % 8
 }
 
 func (w *Writer) Write(key, value []byte) (off uint64, err error) {
@@ -170,7 +167,7 @@ func (r *Reader) Len() uint64 {
 	return r.entryCount
 }
 
-func (r *Reader) Read(off uint64) (key, value []byte, err error) {
+func (r *Reader) ReadAt(off uint64) (key, value []byte, err error) {
 	m := r.mmap.Data()
 	mLen := len(m)
 	if off+recordHeaderSize > uint64(len(m)) {
@@ -195,4 +192,81 @@ func (r *Reader) Read(off uint64) (key, value []byte, err error) {
 		return nil, nil, fmt.Errorf("off %d checksum failed (%d != %d): data file corrupted", off, expectedChecksum, checksum)
 	}
 	return key, value, nil
+}
+
+func (r *Reader) Iter() Iter {
+	return &iter{r: r}
+}
+
+type IterItem struct {
+	Key    []byte
+	Value  []byte
+	Offset uint64
+}
+
+// Iter iterates over the contents in a logfile.  Make sure to `defer it.Close()`.
+type Iter interface {
+	Close()
+	Iter() <-chan IterItem
+	Len() uint64
+	ReadAt(off uint64) (key []byte, value []byte, err error)
+}
+
+type iter struct {
+	r     *Reader
+	mu    sync.Mutex
+	chans []chan IterItem
+}
+
+// Close cleans up the iterator, closing the iteration channel and freeing resources.
+func (i *iter) Close() {
+	i.mu.Lock()
+	defer i.mu.Unlock()
+	for _, ch := range i.chans {
+		close(ch)
+	}
+	i.chans = nil
+}
+
+func (i *iter) Iter() <-chan IterItem {
+	i.mu.Lock()
+	defer i.mu.Unlock()
+	// unbuffered
+	ch := make(chan IterItem, 0)
+	i.chans = append(i.chans, ch)
+	go i.producer(ch)
+	return ch
+}
+
+func (i *iter) producer(ch chan<- IterItem) {
+	// we want senders to be able to close the channel, so just swallow the panic
+	defer func() {
+		if recover() != nil {
+			// do nothing, it's fine
+		}
+	}()
+
+	defer close(ch)
+
+	off := uint64(fileHeaderSize)
+	for {
+		k, v, err := i.r.ReadAt(off)
+		if err != nil {
+			return
+		}
+		ch <- IterItem{
+			Key:    k,
+			Value:  v,
+			Offset: off,
+		}
+		off += recordHeaderSize + uint64(len(k)) + uint64(len(v))
+	}
+}
+
+func (i *iter) Len() uint64 {
+	return i.r.Len()
+}
+
+func (i *iter) ReadAt(off uint64) (key []byte, value []byte, err error) {
+	return i.r.ReadAt(off)
 }

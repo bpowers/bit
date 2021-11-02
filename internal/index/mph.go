@@ -7,6 +7,7 @@ package index
 import (
 	"bufio"
 	"encoding/binary"
+	"errors"
 	"fmt"
 	"io"
 	"math/bits"
@@ -14,6 +15,7 @@ import (
 	"sort"
 	"unsafe"
 
+	"github.com/bpowers/bit/internal/dataio"
 	"github.com/bpowers/bit/internal/exp/mmap"
 
 	"github.com/dgryski/go-farm"
@@ -21,6 +23,10 @@ import (
 
 const (
 	magicIndexHeader = uint32(0xC0FFEE01)
+)
+
+var (
+	errorDuplicateKey = errors.New("duplicate keys aren't supported")
 )
 
 type Entry struct {
@@ -47,17 +53,10 @@ func s2b(s string) (b []byte) {
 	return b
 }
 
-type BuildInputer interface {
-	Next() bool
-	Entry() *Entry
-	KeyAt(off uint64) ([]byte, []byte, error) // random access
-	Len() uint64
-}
-
 // Build builds a Table from keys using the "Hash, displace, and compress"
 // algorithm described in http://cmph.sourceforge.net/papers/esa09.pdf.
-func Build(in BuildInputer) *Table {
-	entryLen := int(in.Len())
+func Build(it dataio.Iter) *Table {
+	entryLen := int(it.Len())
 	var (
 		level0        = make([]uint32, nextPow2(entryLen/4))
 		level0Mask    = uint32(len(level0) - 1)
@@ -69,9 +68,8 @@ func Build(in BuildInputer) *Table {
 	offsets := make([]uint64, entryLen)
 
 	i := 0
-	for in.Next() {
-		e := in.Entry()
-		n := uint32(farm.Hash64WithSeed(s2b(e.Key), 0)) & level0Mask
+	for e := range it.Iter() {
+		n := uint32(farm.Hash64WithSeed(e.Key, 0)) & level0Mask
 		sparseBuckets[n] = append(sparseBuckets[n], i)
 		offsets[i] = e.Offset
 		i++
@@ -92,7 +90,7 @@ func Build(in BuildInputer) *Table {
 	trySeed:
 		tmpOcc = tmpOcc[:0]
 		for _, i := range bucket.vals {
-			key, _, err := in.KeyAt(offsets[i])
+			key, _, err := it.ReadAt(offsets[i])
 			if err != nil {
 				// TODO: fixme
 				panic(err)
