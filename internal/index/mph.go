@@ -15,6 +15,8 @@ import (
 	"sort"
 	"unsafe"
 
+	"github.com/bpowers/bit/bitset"
+
 	"github.com/bpowers/bit/internal/dataio"
 	"github.com/bpowers/bit/internal/exp/mmap"
 
@@ -82,8 +84,7 @@ func Build(it dataio.Iter) *Table {
 	}
 	sort.Sort(bySize(buckets))
 
-	// could be bitset
-	occ := make([]bool, len(level1))
+	occ := bitset.New(len(level1))
 	var tmpOcc []uint32
 	for _, bucket := range buckets {
 		seed := uint64(1)
@@ -96,14 +97,14 @@ func Build(it dataio.Iter) *Table {
 				panic(err)
 			}
 			n := uint32(farm.Hash64WithSeed(key, seed)) & level1Mask
-			if occ[n] {
+			if occ.IsSet(int(n)) {
 				for _, n := range tmpOcc {
-					occ[n] = false
+					occ.Clear(int(n))
 				}
 				seed++
 				goto trySeed
 			}
-			occ[n] = true
+			occ.Set(int(n))
 			tmpOcc = append(tmpOcc, n)
 			level1[n] = uint32(i)
 		}
