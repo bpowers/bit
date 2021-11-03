@@ -11,15 +11,14 @@ import (
 	"fmt"
 	"io"
 	"math/bits"
-	"reflect"
 	"sort"
-	"unsafe"
 
 	"github.com/dgryski/go-farm"
 
 	"github.com/bpowers/bit/bitset"
 	"github.com/bpowers/bit/datafile"
 	"github.com/bpowers/bit/internal/exp/mmap"
+	"github.com/bpowers/bit/internal/unsafestring"
 )
 
 const (
@@ -38,15 +37,6 @@ type Table struct {
 	level0Mask uint32   // len(Level0) - 1
 	level1     []uint32 // power of 2 size >= len(keys)
 	level1Mask uint32   // len(Level1) - 1
-}
-
-func s2b(s string) (b []byte) {
-	bh := (*reflect.SliceHeader)(unsafe.Pointer(&b))
-	sh := *(*reflect.StringHeader)(unsafe.Pointer(&s))
-	bh.Data = sh.Data
-	bh.Len = sh.Len
-	bh.Cap = sh.Len
-	return b
 }
 
 // Build builds a Table from keys using the "Hash, displace, and compress"
@@ -120,7 +110,7 @@ func nextPow2(n int) int {
 
 // MaybeLookupString searches for s in t and returns its potential index.
 func (t *Table) MaybeLookupString(s string) uint64 {
-	return t.MaybeLookup(s2b(s))
+	return t.MaybeLookup(unsafestring.ToBytes(s))
 }
 
 // MaybeLookup searches for b in t and returns its potential index.
@@ -246,7 +236,7 @@ func NewFlatTable(path string) (*FlatTable, error) {
 
 // MaybeLookupString searches for b in t and returns its potential index.
 func (t *FlatTable) MaybeLookupString(s string) uint64 {
-	return t.MaybeLookup(s2b(s))
+	return t.MaybeLookup(unsafestring.ToBytes(s))
 }
 
 // MaybeLookup searches for b in t and returns its potential index.
