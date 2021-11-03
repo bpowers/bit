@@ -60,18 +60,21 @@ func (w *Writer) writeHeader() error {
 	// current file format version
 	binary.LittleEndian.PutUint32(headerBuf[4:8], 1)
 
-	written, err := w.w.Write(headerBuf[:])
+	_, err := w.w.Write(headerBuf[:])
 	if err != nil {
 		return fmt.Errorf("bufio.Write: %e", err)
 	}
-	if written != fileHeaderSize {
-		panic("invariant broken")
-	}
-	w.off += uint64(written)
-	if w.off != fileHeaderSize {
-		panic("invariant broken 2")
-	}
+	w.off += uint64(fileHeaderSize)
 	return nil
+}
+
+func writeRecordHeader(w io.Writer, key, value []byte) (int, error) {
+	checksum := uint32(farm.Hash64(value))
+	var header [recordHeaderSize]byte
+	packedSize := (uint32(len(value)) << 8) | (uint32(len(key)) & 0xff)
+	binary.LittleEndian.PutUint32(header[:4], checksum)
+	binary.LittleEndian.PutUint32(header[4:], packedSize)
+	return w.Write(header[:])
 }
 
 func (w *Writer) Write(key, value []byte) (off uint64, err error) {
@@ -83,12 +86,7 @@ func (w *Writer) Write(key, value []byte) (off uint64, err error) {
 	if len(value) > maximumValueLength {
 		return 0, fmt.Errorf("value length %d greater than %d", len(value), maximumValueLength)
 	}
-	checksum := uint32(farm.Hash64(value))
-	var header [recordHeaderSize]byte
-	packedSize := (uint32(len(value)) << 8) | (uint32(len(key)) & 0xff)
-	binary.LittleEndian.PutUint32(header[:4], checksum)
-	binary.LittleEndian.PutUint32(header[4:], packedSize)
-	headerWritten, err := w.w.Write(header[:])
+	headerWritten, err := writeRecordHeader(w.w, key, value)
 	if err != nil {
 		return 0, fmt.Errorf("bufio.Write 1: %e", err)
 	}
