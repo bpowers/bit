@@ -24,6 +24,7 @@ import (
 
 const (
 	magicIndexHeader = uint32(0xC0FFEE01)
+	fileHeaderSize   = 128
 )
 
 var (
@@ -249,6 +250,19 @@ func (s bySize) Len() int           { return len(s) }
 func (s bySize) Less(i, j int) bool { return len(s[i].vals) > len(s[j].vals) }
 func (s bySize) Swap(i, j int)      { s[i], s[j] = s[j], s[i] }
 
+func writeFileHeader(w io.Writer, offsetsLen, level0Len, level1Len int) error {
+	var buf [fileHeaderSize]byte
+
+	binary.LittleEndian.PutUint32(buf[0:4], magicIndexHeader)
+	binary.LittleEndian.PutUint32(buf[4:8], 1) // file version
+	binary.LittleEndian.PutUint32(buf[8:12], uint32(offsetsLen))
+	binary.LittleEndian.PutUint32(buf[12:16], uint32(level0Len))
+	binary.LittleEndian.PutUint32(buf[16:20], uint32(level1Len))
+
+	_, err := w.Write(buf[:])
+	return err
+}
+
 // Write writes the table out to the given file
 func (t *Table) Write(w io.Writer) error {
 	bw := bufio.NewWriterSize(w, 4*1024*1024)
@@ -256,28 +270,11 @@ func (t *Table) Write(w io.Writer) error {
 		_ = bw.Flush()
 	}()
 
-	if err := binary.Write(bw, binary.LittleEndian, magicIndexHeader); err != nil {
-		return err
-	}
-	// version
-	if err := binary.Write(bw, binary.LittleEndian, uint32(1)); err != nil {
-		return err
-	}
-	if err := binary.Write(bw, binary.LittleEndian, uint32(len(t.offsets))); err != nil {
-		return err
-	}
-	if err := binary.Write(bw, binary.LittleEndian, uint32(len(t.level0))); err != nil {
-		return err
-	}
-	if err := binary.Write(bw, binary.LittleEndian, uint32(len(t.level1))); err != nil {
-		return err
-	}
-	const padding = uint32(0)
-	if err := binary.Write(bw, binary.LittleEndian, padding); err != nil {
-		return err
+	if err := writeFileHeader(bw, len(t.offsets), len(t.level0), len(t.level1)); err != nil {
+		return fmt.Errorf("writeFileHeader: %e", err)
 	}
 
-	// we should be 8-byte aligned at this point (an even number of 4-byte writes above)
+	// we should be 8-byte aligned at this point (file header is 128-bytes wide)
 
 	// write offsets first, while we're sure we're 8-byte aligned
 	for _, i := range t.offsets {
@@ -331,7 +328,7 @@ func NewFlatTable(path string) (*FlatTable, error) {
 	level0Len := binary.LittleEndian.Uint32(m[12:16])
 	level1Len := binary.LittleEndian.Uint32(m[16:20])
 
-	rest := m[24:]
+	rest := m[fileHeaderSize:]
 	offsets := rest[:offsetLen*8]
 	level0 := rest[offsetLen*8 : offsetLen*8+level0Len*4]
 	level1 := rest[offsetLen*8+level0Len*4:]
