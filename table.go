@@ -84,16 +84,12 @@ func (b *Builder) Finalize() (*Table, error) {
 		return nil, fmt.Errorf("datafile.NewMMapReaderWithPath(%s): %e", dataPath, err)
 	}
 
-	it := r.Iter()
-	defer it.Close()
-	idx := indexfile.Build(it)
 	finalIndexPath := dataPath + ".index"
 	f, err := os.CreateTemp(filepath.Dir(dataPath), "bit-builder.*.index")
-	if err != nil {
-		return nil, fmt.Errorf("os.CreateTemp: %e", err)
-	}
 
-	if err := idx.Write(f); err != nil {
+	it := r.Iter()
+	defer it.Close()
+	if err := indexfile.BuildFlat(f, it); err != nil {
 		_ = f.Close()
 		_ = os.Remove(f.Name())
 		return nil, fmt.Errorf("idx.Write: %e", err)

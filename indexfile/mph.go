@@ -164,23 +164,49 @@ func Build(it datafile.Iter) *Table {
 
 // BuildFlat builds a Table from keys using the "Hash, displace, and compress"
 // algorithm described in http://cmph.sourceforge.net/papers/esa09.pdf.
-func BuildFlat(f *os.File, it datafile.Iter) (*FlatTable, error) {
-	entryLen := int(it.Len())
+func BuildFlat(f *os.File, it datafile.Iter) error {
 	var (
-		level0        = make([]uint32, nextPow2(entryLen/4))
-		level0Mask    = uint32(len(level0) - 1)
-		level1        = make([]uint32, nextPow2(entryLen))
-		level1Mask    = uint32(len(level1) - 1)
-		sparseBuckets = make([][]int, len(level0))
+		entryLen  = int(it.Len())
+		level0Len = nextPow2(entryLen / 4)
+		level1Len = nextPow2(entryLen)
+
+		level0Mask    = uint32(level0Len - 1)
+		level1Mask    = uint32(level1Len - 1)
+		sparseBuckets = make([][]int, level0Len)
 	)
 
-	offsets := make([]uint64, entryLen)
+	if err := writeFileHeader(f, entryLen, level0Len, level1Len); err != nil {
+		return fmt.Errorf("writeFileHeader: %e", err)
+	}
+
+	if err := f.Truncate(int64(fileHeaderSize + entryLen*8 + level0Len*4 + level1Len*4)); err != nil {
+		return fmt.Errorf("truncate: %e", err)
+	}
+	var (
+		offsets = ondiskU64Slice{
+			f:   f,
+			off: fileHeaderSize,
+			len: entryLen,
+		}
+		level0 = ondiskU32Slice{
+			f:   f,
+			off: int64(fileHeaderSize + entryLen*8),
+			len: level0Len,
+		}
+		level1 = ondiskU32Slice{
+			f:   f,
+			off: int64(fileHeaderSize + entryLen*8 + level0Len*4),
+			len: level1Len,
+		}
+	)
 
 	i := 0
 	for e := range it.Iter() {
 		n := uint32(farm.Hash64WithSeed(e.Key, 0)) & level0Mask
 		sparseBuckets[n] = append(sparseBuckets[n], i)
-		offsets[i] = e.Offset
+		if err := offsets.Set(i, e.Offset); err != nil {
+			return err
+		}
 		i++
 	}
 	var buckets []indexBucket
@@ -191,18 +217,28 @@ func BuildFlat(f *os.File, it datafile.Iter) (*FlatTable, error) {
 	}
 	sort.Sort(bySize(buckets))
 
-	occ := bitset.New(len(level1))
+	occ := bitset.New(level1Len)
 	var tmpOcc []uint32
 	for _, bucket := range buckets {
 		seed := uint64(1)
+		// we may retry the `trySeed` loop below multiple times -- ensure we
+		// only have to read the keys off disk once
+		keys := make([][]byte, len(bucket.vals))
+		for i, n := range bucket.vals {
+			off, err := offsets.Get(n)
+			if err != nil {
+				return err
+			}
+			key, _, err := it.ReadAt(off)
+			if err != nil {
+				return err
+			}
+			keys[i] = key
+		}
 	trySeed:
 		tmpOcc = tmpOcc[:0]
-		for _, i := range bucket.vals {
-			key, _, err := it.ReadAt(offsets[i])
-			if err != nil {
-				// TODO: fixme
-				panic(err)
-			}
+		for i, j := range bucket.vals {
+			key := keys[i]
 			n := uint32(farm.Hash64WithSeed(key, seed)) & level1Mask
 			if occ.IsSet(int(n)) {
 				for _, n := range tmpOcc {
@@ -213,12 +249,16 @@ func BuildFlat(f *os.File, it datafile.Iter) (*FlatTable, error) {
 			}
 			occ.Set(int(n))
 			tmpOcc = append(tmpOcc, n)
-			level1[n] = uint32(i)
+			if err := level1.Set(int(n), uint32(j)); err != nil {
+				return err
+			}
 		}
-		level0[bucket.n] = uint32(seed)
+		if err := level0.Set(bucket.n, uint32(seed)); err != nil {
+			return err
+		}
 	}
 
-	return NewFlatTable(f.Name())
+	return nil
 }
 
 func nextPow2(n int) int {
