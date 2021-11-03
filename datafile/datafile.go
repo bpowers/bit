@@ -6,6 +6,7 @@ package datafile
 
 import (
 	"bufio"
+	"context"
 	"encoding/binary"
 	"fmt"
 	"io"
@@ -215,7 +216,10 @@ type Iter interface {
 type iter struct {
 	r     *Reader
 	mu    sync.Mutex
-	chans []chan IterItem
+	chans []struct {
+		cancel func()
+		ch     chan IterItem
+	}
 }
 
 // Close cleans up the iterator, closing the iteration channel and freeing resources.
@@ -223,7 +227,7 @@ func (i *iter) Close() {
 	i.mu.Lock()
 	defer i.mu.Unlock()
 	for _, ch := range i.chans {
-		close(ch)
+		ch.cancel()
 	}
 	i.chans = nil
 }
@@ -231,21 +235,21 @@ func (i *iter) Close() {
 func (i *iter) Iter() <-chan IterItem {
 	i.mu.Lock()
 	defer i.mu.Unlock()
+	ctx, cancel := context.WithCancel(context.Background())
 	// unbuffered
 	ch := make(chan IterItem, 0)
-	i.chans = append(i.chans, ch)
-	go i.producer(ch)
+	i.chans = append(i.chans, struct {
+		cancel func()
+		ch     chan IterItem
+	}{
+		cancel: cancel,
+		ch:     ch,
+	})
+	go i.producer(ctx, ch)
 	return ch
 }
 
-func (i *iter) producer(ch chan<- IterItem) {
-	// we want senders to be able to close the channel, so just swallow the panic
-	defer func() {
-		if recover() != nil {
-			// do nothing, it's fine
-		}
-	}()
-
+func (i *iter) producer(ctx context.Context, ch chan<- IterItem) {
 	defer close(ch)
 
 	off := uint64(fileHeaderSize)
@@ -254,10 +258,15 @@ func (i *iter) producer(ch chan<- IterItem) {
 		if err != nil {
 			return
 		}
-		ch <- IterItem{
+		item := IterItem{
 			Key:    k,
 			Value:  v,
 			Offset: off,
+		}
+		select {
+		case ch <- item:
+		case <-ctx.Done():
+			break
 		}
 		off += recordHeaderSize + uint64(len(k)) + uint64(len(v))
 	}

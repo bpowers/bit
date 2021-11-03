@@ -30,11 +30,6 @@ var (
 	errorDuplicateKey = errors.New("duplicate keys aren't supported")
 )
 
-type Entry struct {
-	Key    string
-	Offset uint64
-}
-
 // Table is an immutable hash table that provides constant-time lookups of key
 // indices using a minimal perfect hash.
 type Table struct {

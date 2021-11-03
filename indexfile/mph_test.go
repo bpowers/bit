@@ -6,11 +6,71 @@ package indexfile
 
 import (
 	"bufio"
+	"context"
+	"errors"
 	"os"
 	"strconv"
 	"sync"
 	"testing"
+
+	"github.com/bpowers/bit/datafile"
 )
+
+type testEntry struct {
+	Key    string
+	Value  string
+	Offset uint64
+}
+
+type testIter struct {
+	items  []testEntry
+	cancel func()
+	ch     chan datafile.IterItem
+}
+
+// Close cleans up the iterator, closing the iteration channel and freeing resources.
+func (i *testIter) Close() {
+	i.cancel()
+}
+
+func (i *testIter) Iter() <-chan datafile.IterItem {
+	// unbuffered
+	ctx, cancel := context.WithCancel(context.Background())
+	i.cancel = cancel
+	i.ch = make(chan datafile.IterItem, 0)
+	go i.producer(ctx, i.ch)
+	return i.ch
+}
+
+func (i *testIter) producer(ctx context.Context, ch chan<- datafile.IterItem) {
+	defer close(ch)
+
+	for off := uint64(0); off < uint64(len(i.items)); off++ {
+		item := i.items[off]
+		iitem := datafile.IterItem{
+			Key:    []byte(item.Key),
+			Value:  []byte(item.Value),
+			Offset: off,
+		}
+		select {
+		case ch <- iitem:
+		case <-ctx.Done():
+			break
+		}
+	}
+}
+
+func (i *testIter) Len() uint64 {
+	return uint64(len(i.items))
+}
+
+func (i *testIter) ReadAt(off uint64) (key []byte, value []byte, err error) {
+	if off >= uint64(len(i.items)) {
+		return nil, nil, errors.New("off too big")
+	}
+	item := i.items[off]
+	return []byte(item.Key), []byte(item.Value), nil
+}
 
 func TestBuild_simple(t *testing.T) {
 	testTable(t, []string{"foo", "foo2", "bar", "baz"}, []string{"quux"})
@@ -30,11 +90,13 @@ func TestBuild_stress(t *testing.T) {
 }
 
 func testTable(t *testing.T, keys []string, extra []string) {
-	entries := make([]Entry, len(keys))
+	entries := make([]testEntry, len(keys))
 	for i, key := range keys {
-		entries[i] = Entry{Key: key, Offset: uint64(i)}
+		entries[i] = testEntry{Key: key, Offset: uint64(i)}
 	}
-	table := Build(entries)
+	it := &testIter{items: entries}
+	defer it.Close()
+	table := Build(it)
 	for i, key := range keys {
 		n := table.MaybeLookupString(key)
 		if int(n) != i {
@@ -44,7 +106,7 @@ func testTable(t *testing.T, keys []string, extra []string) {
 }
 
 var (
-	words          []Entry
+	words          []testEntry
 	wordsOnce      sync.Once
 	benchTable     *Table
 	benchFlatTable *FlatTable
@@ -56,7 +118,7 @@ func BenchmarkBuild(b *testing.B) {
 		b.Skip("unable to load dictionary file")
 	}
 	for i := 0; i < b.N; i++ {
-		Build(words)
+		Build(&testIter{items: words})
 	}
 }
 
@@ -122,7 +184,9 @@ func loadBenchTable() {
 		}
 	}
 	if len(words) > 0 {
-		benchTable = Build(words)
+		it := &testIter{items: words}
+		defer it.Close()
+		benchTable = Build(it)
 		f, err := os.CreateTemp("", "bit-test.*.idx")
 		if err != nil {
 			panic(err)
@@ -140,17 +204,17 @@ func loadBenchTable() {
 	}
 }
 
-func loadDict(dict string) ([]Entry, error) {
+func loadDict(dict string) ([]testEntry, error) {
 	f, err := os.Open(dict)
 	if err != nil {
 		return nil, err
 	}
 	defer f.Close()
 	scanner := bufio.NewScanner(f)
-	var words []Entry
+	var words []testEntry
 	i := uint64(0)
 	for scanner.Scan() {
-		words = append(words, Entry{Key: string(scanner.Bytes()), Offset: i})
+		words = append(words, testEntry{Key: string(scanner.Bytes()), Offset: i})
 		i++
 	}
 	if err := scanner.Err(); err != nil {
