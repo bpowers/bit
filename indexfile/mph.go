@@ -200,15 +200,24 @@ func BuildFlat(f *os.File, it datafile.Iter) error {
 		}
 	)
 
+	bw := bufio.NewWriterSize(f, 4*1024*1024)
+
 	i := 0
 	for e := range it.Iter() {
 		n := uint32(farm.Hash64WithSeed(e.Key, 0)) & level0Mask
 		sparseBuckets[n] = append(sparseBuckets[n], i)
-		if err := offsets.Set(i, e.Offset); err != nil {
+		var valueBuf [8]byte
+		binary.LittleEndian.PutUint64(valueBuf[:], e.Offset)
+		if _, err := bw.Write(valueBuf[:]); err != nil {
 			return err
 		}
 		i++
 	}
+
+	if err := bw.Flush(); err != nil {
+		return err
+	}
+
 	var buckets []indexBucket
 	for n, vals := range sparseBuckets {
 		if len(vals) > 0 {
