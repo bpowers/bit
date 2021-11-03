@@ -11,6 +11,7 @@ import (
 	"fmt"
 	"io"
 	"math/bits"
+	"os"
 	"sort"
 
 	"github.com/dgryski/go-farm"
@@ -37,6 +38,62 @@ type Table struct {
 	level0Mask uint32   // len(Level0) - 1
 	level1     []uint32 // power of 2 size >= len(keys)
 	level1Mask uint32   // len(Level1) - 1
+}
+
+type ondiskU32Slice struct {
+	f   *os.File
+	off int64 // offset in bytes of the start of this slice
+	len int   // length in number of elements
+}
+
+func (s *ondiskU32Slice) Set(i int, value uint32) error {
+	if i < 0 || i >= s.len {
+		return fmt.Errorf("offset (%d) out of range (len %d)", i, s.len)
+	}
+	var buf [4]byte
+	binary.LittleEndian.PutUint32(buf[:], value)
+	_, err := s.f.WriteAt(buf[:], s.off+int64(4*i))
+	return err
+}
+
+func (s *ondiskU32Slice) Get(i int) (uint32, error) {
+	if i < 0 || i >= s.len {
+		return 0, fmt.Errorf("offset (%d) out of range (len %d)", i, s.len)
+	}
+	var buf [4]byte
+	_, err := s.f.ReadAt(buf[:], s.off+int64(4*i))
+	if err != nil {
+		return 0, err
+	}
+	return binary.LittleEndian.Uint32(buf[:]), nil
+}
+
+type ondiskU64Slice struct {
+	f   *os.File
+	off int64 // offset in bytes of the start of this slice
+	len int   // length in number of elements
+}
+
+func (s *ondiskU64Slice) Set(i int, value uint64) error {
+	if i < 0 || i >= s.len {
+		return fmt.Errorf("offset (%d) out of range (len %d)", i, s.len)
+	}
+	var buf [8]byte
+	binary.LittleEndian.PutUint64(buf[:], value)
+	_, err := s.f.WriteAt(buf[:], s.off+int64(8*i))
+	return err
+}
+
+func (s *ondiskU64Slice) Get(i int) (uint64, error) {
+	if i < 0 || i >= s.len {
+		return 0, fmt.Errorf("offset (%d) out of range (len %d)", i, s.len)
+	}
+	var buf [8]byte
+	_, err := s.f.ReadAt(buf[:], s.off+int64(8*i))
+	if err != nil {
+		return 0, err
+	}
+	return binary.LittleEndian.Uint64(buf[:]), nil
 }
 
 // Build builds a Table from keys using the "Hash, displace, and compress"
@@ -102,6 +159,65 @@ func Build(it datafile.Iter) *Table {
 		level1:     level1,
 		level1Mask: level1Mask,
 	}
+}
+
+// BuildFlat builds a Table from keys using the "Hash, displace, and compress"
+// algorithm described in http://cmph.sourceforge.net/papers/esa09.pdf.
+func BuildFlat(f *os.File, it datafile.Iter) (*FlatTable, error) {
+	entryLen := int(it.Len())
+	var (
+		level0        = make([]uint32, nextPow2(entryLen/4))
+		level0Mask    = uint32(len(level0) - 1)
+		level1        = make([]uint32, nextPow2(entryLen))
+		level1Mask    = uint32(len(level1) - 1)
+		sparseBuckets = make([][]int, len(level0))
+	)
+
+	offsets := make([]uint64, entryLen)
+
+	i := 0
+	for e := range it.Iter() {
+		n := uint32(farm.Hash64WithSeed(e.Key, 0)) & level0Mask
+		sparseBuckets[n] = append(sparseBuckets[n], i)
+		offsets[i] = e.Offset
+		i++
+	}
+	var buckets []indexBucket
+	for n, vals := range sparseBuckets {
+		if len(vals) > 0 {
+			buckets = append(buckets, indexBucket{n, vals})
+		}
+	}
+	sort.Sort(bySize(buckets))
+
+	occ := bitset.New(len(level1))
+	var tmpOcc []uint32
+	for _, bucket := range buckets {
+		seed := uint64(1)
+	trySeed:
+		tmpOcc = tmpOcc[:0]
+		for _, i := range bucket.vals {
+			key, _, err := it.ReadAt(offsets[i])
+			if err != nil {
+				// TODO: fixme
+				panic(err)
+			}
+			n := uint32(farm.Hash64WithSeed(key, seed)) & level1Mask
+			if occ.IsSet(int(n)) {
+				for _, n := range tmpOcc {
+					occ.Clear(int(n))
+				}
+				seed++
+				goto trySeed
+			}
+			occ.Set(int(n))
+			tmpOcc = append(tmpOcc, n)
+			level1[n] = uint32(i)
+		}
+		level0[bucket.n] = uint32(seed)
+	}
+
+	return NewFlatTable(f.Name())
 }
 
 func nextPow2(n int) int {
