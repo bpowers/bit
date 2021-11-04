@@ -40,6 +40,16 @@ func loadBenchTable() {
 	for k, v := range expected {
 		benchEntries = append(benchEntries, benchEntry{Key: k, Value: v})
 	}
+
+	benchHashmap = make(map[string]string)
+	for _, entry := range benchEntries {
+		keyBuf = make([]byte, len(entry.Key))
+		copy(keyBuf, entry.Key)
+		valueBuf = make([]byte, len(entry.Value))
+		copy(valueBuf, entry.Value)
+		// attempt to ensure the hashmap doesn't share memory with our test oracle
+		benchHashmap[string(keyBuf)] = string(valueBuf)
+	}
 }
 
 func TestSplit2(t *testing.T) {
@@ -156,7 +166,10 @@ func TestTableLarge(t *testing.T) {
 }
 
 func BenchmarkTable(b *testing.B) {
+	benchTableOnce.Do(loadBenchTable)
+
 	b.ReportAllocs()
+	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
 		j := i % len(benchEntries)
 		entry := benchEntries[j]
@@ -168,8 +181,10 @@ func BenchmarkTable(b *testing.B) {
 }
 
 func BenchmarkHashmap(b *testing.B) {
+	benchTableOnce.Do(loadBenchTable)
 
 	b.ReportAllocs()
+	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
 		j := i % len(benchEntries)
 		entry := benchEntries[j]
@@ -181,15 +196,4 @@ func BenchmarkHashmap(b *testing.B) {
 }
 
 func init() {
-	benchTableOnce.Do(loadBenchTable)
-
-	benchHashmap = make(map[string]string)
-	for _, entry := range benchEntries {
-		keyBuf = make([]byte, len(entry.Key))
-		copy(keyBuf, entry.Key)
-		valueBuf = make([]byte, len(entry.Value))
-		copy(valueBuf, entry.Value)
-		// attempt to ensure the hashmap doesn't share memory with our test oracle
-		benchHashmap[string(keyBuf)] = string(valueBuf)
-	}
 }

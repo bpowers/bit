@@ -233,6 +233,8 @@ func BuildFlat(f *os.File, it datafile.Iter) error {
 		// we may retry the `trySeed` loop below multiple times -- ensure we
 		// only have to read the keys off disk once
 		keys := make([][]byte, len(bucket.vals))
+		results := make([]int, len(bucket.vals))
+
 		for i, n := range bucket.vals {
 			off, err := offsets.Get(n)
 			if err != nil {
@@ -246,7 +248,7 @@ func BuildFlat(f *os.File, it datafile.Iter) error {
 		}
 	trySeed:
 		tmpOcc = tmpOcc[:0]
-		for i, j := range bucket.vals {
+		for i := range bucket.vals {
 			key := keys[i]
 			n := uint32(farm.Hash64WithSeed(key, seed)) & level1Mask
 			if occ.IsSet(int(n)) {
@@ -258,7 +260,10 @@ func BuildFlat(f *os.File, it datafile.Iter) error {
 			}
 			occ.Set(int(n))
 			tmpOcc = append(tmpOcc, n)
-			if err := level1.Set(int(n), uint32(j)); err != nil {
+			results[i] = int(n)
+		}
+		for i, n := range results {
+			if err := level1.Set(n, uint32(bucket.vals[i])); err != nil {
 				return err
 			}
 		}
