@@ -96,7 +96,15 @@ func testTable(t *testing.T, keys []string, extra []string) {
 	}
 	it := &testIter{items: entries}
 	defer it.Close()
-	table := Build(it)
+	f := tmpTestfile()
+	defer f.Close()
+	if err := BuildFlat(f, it); err != nil {
+		panic(err)
+	}
+	table, err := NewFlatTable(f.Name())
+	if err != nil {
+		panic(err)
+	}
 	for i, key := range keys {
 		n := table.MaybeLookupString(key)
 		if int(n) != i {
@@ -112,13 +120,25 @@ var (
 	benchFlatTable *FlatTable
 )
 
+func tmpTestfile() *os.File {
+	f, err := os.CreateTemp("", "bit-test.*.index")
+	if err != nil {
+		panic(err)
+	}
+	return f
+}
+
 func BenchmarkBuild(b *testing.B) {
 	wordsOnce.Do(loadBenchTable)
 	if len(words) == 0 {
 		b.Skip("unable to load dictionary file")
 	}
+	f := tmpTestfile()
+	defer f.Close()
 	for i := 0; i < b.N; i++ {
-		Build(&testIter{items: words})
+		if err := BuildFlat(f, &testIter{items: words}); err != nil {
+			panic(err)
+		}
 	}
 }
 
@@ -187,16 +207,13 @@ func loadBenchTable() {
 		it := &testIter{items: words}
 		defer it.Close()
 		benchTable = Build(it)
-		f, err := os.CreateTemp("", "bit-test.*.idx")
-		if err != nil {
-			panic(err)
-		}
-		defer func() {
-			_ = f.Close()
-		}()
+
+		f := tmpTestfile()
+		defer f.Close()
 		if err := benchTable.Write(f); err != nil {
 			panic(err)
 		}
+		var err error
 		benchFlatTable, err = NewFlatTable(f.Name())
 		if err != nil {
 			panic(err)
