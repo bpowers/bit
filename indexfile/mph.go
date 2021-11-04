@@ -12,7 +12,10 @@ import (
 	"io"
 	"math/bits"
 	"os"
+	"path"
 	"sort"
+
+	"github.com/bpowers/bit/internal/ondisk"
 
 	"github.com/dgryski/go-farm"
 
@@ -39,62 +42,6 @@ type Table struct {
 	level0Mask uint32   // len(Level0) - 1
 	level1     []uint32 // power of 2 size >= len(keys)
 	level1Mask uint32   // len(Level1) - 1
-}
-
-type ondiskU32Slice struct {
-	f   *os.File
-	off int64 // offset in bytes of the start of this slice
-	len int   // length in number of elements
-}
-
-func (s *ondiskU32Slice) Set(i int, value uint32) error {
-	if i < 0 || i >= s.len {
-		return fmt.Errorf("offset (%d) out of range (len %d)", i, s.len)
-	}
-	var buf [4]byte
-	binary.LittleEndian.PutUint32(buf[:], value)
-	_, err := s.f.WriteAt(buf[:], s.off+int64(4*i))
-	return err
-}
-
-func (s *ondiskU32Slice) Get(i int) (uint32, error) {
-	if i < 0 || i >= s.len {
-		return 0, fmt.Errorf("offset (%d) out of range (len %d)", i, s.len)
-	}
-	var buf [4]byte
-	_, err := s.f.ReadAt(buf[:], s.off+int64(4*i))
-	if err != nil {
-		return 0, err
-	}
-	return binary.LittleEndian.Uint32(buf[:]), nil
-}
-
-type ondiskU64Slice struct {
-	f   *os.File
-	off int64 // offset in bytes of the start of this slice
-	len int   // length in number of elements
-}
-
-func (s *ondiskU64Slice) Set(i int, value uint64) error {
-	if i < 0 || i >= s.len {
-		return fmt.Errorf("offset (%d) out of range (len %d)", i, s.len)
-	}
-	var buf [8]byte
-	binary.LittleEndian.PutUint64(buf[:], value)
-	_, err := s.f.WriteAt(buf[:], s.off+int64(8*i))
-	return err
-}
-
-func (s *ondiskU64Slice) Get(i int) (uint64, error) {
-	if i < 0 || i >= s.len {
-		return 0, fmt.Errorf("offset (%d) out of range (len %d)", i, s.len)
-	}
-	var buf [8]byte
-	_, err := s.f.ReadAt(buf[:], s.off+int64(8*i))
-	if err != nil {
-		return 0, err
-	}
-	return binary.LittleEndian.Uint64(buf[:]), nil
 }
 
 // Build builds a Table from keys using the "Hash, displace, and compress"
@@ -183,24 +130,25 @@ func BuildFlat(f *os.File, it datafile.Iter) error {
 		return fmt.Errorf("truncate: %e", err)
 	}
 	var (
-		offsets = ondiskU64Slice{
-			f:   f,
-			off: fileHeaderSize,
-			len: entryLen,
-		}
-		level0 = ondiskU32Slice{
-			f:   f,
-			off: int64(fileHeaderSize + entryLen*8),
-			len: level0Len,
-		}
-		level1 = ondiskU32Slice{
-			f:   f,
-			off: int64(fileHeaderSize + entryLen*8 + level0Len*4),
-			len: level1Len,
-		}
+		offsets = ondisk.NewU64Slice(f, entryLen, fileHeaderSize)
+		level0  = ondisk.NewU32Slice(f, level0Len, int64(fileHeaderSize+entryLen*8))
+		level1  = ondisk.NewU32Slice(f, level1Len, int64(fileHeaderSize+entryLen*8+level0Len*4))
 	)
 
 	bw := bufio.NewWriterSize(f, 4*1024*1024)
+
+	bucketFile, err := os.CreateTemp(path.Dir(f.Name()), "bit-buildindex.*.buckets")
+	if err != nil {
+		return fmt.Errorf("os.CreateTemp: %e", err)
+	}
+	defer func() {
+		_ = bucketFile.Close()
+	}()
+	sparseBuckets2, err := ondisk.NewBucketSlice(bucketFile, level0Len)
+	if err != nil {
+		return fmt.Errorf("ondisk.NewBucketSlice: %e", err)
+	}
+	_ = sparseBuckets2
 
 	i := 0
 	for e := range it.Iter() {
@@ -225,6 +173,8 @@ func BuildFlat(f *os.File, it datafile.Iter) error {
 		}
 	}
 	sort.Sort(bySize(buckets))
+
+	// fmt.Printf("%d sparse buckets -- %d buckets %d-%d occupancy\n", len(sparseBuckets), len(buckets), len(buckets[0].vals), len(buckets[len(buckets)-1].vals))
 
 	occ := bitset.New(level1Len)
 	var tmpOcc []uint32
