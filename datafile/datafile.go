@@ -68,7 +68,7 @@ func (w *Writer) writeHeader() error {
 	return nil
 }
 
-func writeRecordHeader(w io.Writer, key, value []byte) (int, error) {
+func writeRecordHeader(w *bufio.Writer, key, value []byte) (int, error) {
 	checksum := uint32(farm.Hash64(value))
 	var header [recordHeaderSize]byte
 	packedSize := (uint32(len(value)) << 8) | (uint32(len(key)) & 0xff)
