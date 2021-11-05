@@ -8,6 +8,8 @@ import (
 	"encoding/binary"
 	"fmt"
 	"os"
+
+	"github.com/bpowers/bit/internal/zero"
 )
 
 type U32Slice struct {
@@ -115,18 +117,6 @@ func NewBucketSlice(f *os.File, len int) (*BucketSlice, error) {
 	return b, nil
 }
 
-func zero(b []byte) {
-	for i := 0; i < len(b); i++ {
-		b[i] = 0
-	}
-}
-
-func zeroU32(b []uint32) {
-	for i := 0; i < len(b); i++ {
-		b[i] = 0
-	}
-}
-
 func readBucket(f *os.File, b []byte, off, bucketCap int) error {
 	bucketSize := bucketLen(bucketCap)
 	if len(b) < bucketSize {
@@ -166,7 +156,7 @@ func (s *BucketSlice) setBucketCapacity(newBucketCap int) error {
 	// iterate in reverse order so that we are always moving a bucket into a new (or no longer
 	// needed) part of the file
 	for i := s.len - 1; i >= 0; i-- {
-		zero(bucketBuf)
+		zero.Bytes(bucketBuf)
 		if err := readBucket(s.f, bucketBuf[0:oldBucketSize], i, oldBucketCap); err != nil {
 			return fmt.Errorf("readBucket: %e", err)
 		}
@@ -184,7 +174,7 @@ func (s *BucketSlice) AddToBucket(off int64, n int32) error {
 		return fmt.Errorf("off %d out of range", off)
 	}
 	bucketBuf := s.bucketBuf[0:bucketLen(s.bucketCap)]
-	zero(bucketBuf)
+	zero.Bytes(bucketBuf)
 	if err := readBucket(s.f, bucketBuf, int(off), s.bucketCap); err != nil {
 		return fmt.Errorf("readBucket: %e", err)
 	}
@@ -198,7 +188,7 @@ func (s *BucketSlice) AddToBucket(off int64, n int32) error {
 			return err
 		}
 		bucketBuf = s.bucketBuf[0:bucketLen(s.bucketCap)]
-		zero(bucketBuf)
+		zero.Bytes(bucketBuf)
 		if err := readBucket(s.f, bucketBuf, int(off), s.bucketCap); err != nil {
 			return fmt.Errorf("readBucket: %e", err)
 		}
@@ -220,7 +210,7 @@ func (s *BucketSlice) Bucket(off int) (Bucket, error) {
 		s.bucketBuf = make([]byte, bucketSize)
 	}
 	buf := s.bucketBuf[:bucketSize]
-	zero(buf)
+	zero.Bytes(buf)
 	if err := readBucket(s.f, buf, off, s.bucketCap); err != nil {
 		return Bucket{}, err
 	}
@@ -234,7 +224,7 @@ func (s *BucketSlice) Bucket(off int) (Bucket, error) {
 		panic(fmt.Errorf("invariant broken: bucket %d overflowed", off))
 	}
 	values := s.valuesBuf[0:valuesLen]
-	zeroU32(values)
+	zero.U32(values)
 	for i := 0; i < valuesLen; i++ {
 		v := binary.LittleEndian.Uint32(buf[8+4*i : 8+4*i+4])
 		values[i] = v
@@ -250,8 +240,6 @@ func (s *BucketSlice) Len() int {
 	return s.len
 }
 
-var n int
-
 func (s *BucketSlice) Less(i, j int) bool {
 	l := bucketLen(s.bucketCap)
 	if len(s.bucketBuf) < l*2 {
@@ -259,8 +247,8 @@ func (s *BucketSlice) Less(i, j int) bool {
 	}
 	iBuf := s.bucketBuf[:l]
 	jBuf := s.bucketBuf[l:]
-	zero(iBuf)
-	zero(jBuf)
+	zero.Bytes(iBuf)
+	zero.Bytes(jBuf)
 	// capacity of zero -- we only care about the headers
 	if err := readBucket(s.f, iBuf[:], i, s.bucketCap); err != nil {
 		panic(err)

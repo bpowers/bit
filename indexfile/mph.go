@@ -15,14 +15,14 @@ import (
 	"path"
 	"sort"
 
-	"github.com/bpowers/bit/internal/ondisk"
-
 	"github.com/dgryski/go-farm"
 
 	"github.com/bpowers/bit/bitset"
 	"github.com/bpowers/bit/datafile"
 	"github.com/bpowers/bit/internal/exp/mmap"
+	"github.com/bpowers/bit/internal/ondisk"
 	"github.com/bpowers/bit/internal/unsafestring"
+	"github.com/bpowers/bit/internal/zero"
 )
 
 const (
@@ -117,9 +117,8 @@ func BuildFlat(f *os.File, it datafile.Iter) error {
 		level0Len = nextPow2(entryLen / 4)
 		level1Len = nextPow2(entryLen)
 
-		level0Mask    = uint32(level0Len - 1)
-		level1Mask    = uint32(level1Len - 1)
-		sparseBuckets = make([][]int, level0Len)
+		level0Mask = uint32(level0Len - 1)
+		level1Mask = uint32(level1Len - 1)
 	)
 
 	if err := writeFileHeader(f, entryLen, level0Len, level1Len); err != nil {
@@ -144,17 +143,15 @@ func BuildFlat(f *os.File, it datafile.Iter) error {
 	defer func() {
 		_ = bucketFile.Close()
 	}()
-	sparseBuckets2, err := ondisk.NewBucketSlice(bucketFile, level0Len)
+	buckets, err := ondisk.NewBucketSlice(bucketFile, level0Len)
 	if err != nil {
 		return fmt.Errorf("ondisk.NewBucketSlice: %e", err)
 	}
-	_ = sparseBuckets2
 
 	i := 0
 	for e := range it.Iter() {
 		n := uint32(farm.Hash64WithSeed(e.Key, 0)) & level0Mask
-		sparseBuckets[n] = append(sparseBuckets[n], i)
-		if err := sparseBuckets2.AddToBucket(int64(n), int32(i)); err != nil {
+		if err := buckets.AddToBucket(int64(n), int32(i)); err != nil {
 			return err
 		}
 		var valueBuf [8]byte
@@ -169,19 +166,15 @@ func BuildFlat(f *os.File, it datafile.Iter) error {
 		return err
 	}
 
-	var buckets []indexBucket
-	for n, vals := range sparseBuckets {
-		if len(vals) > 0 {
-			buckets = append(buckets, indexBucket{n, vals})
-		}
-	}
-	sort.Sort(bySize(buckets))
-	sort.Sort(sparseBuckets2)
+	sort.Sort(buckets)
+
+	keys := make([][]byte, 32)
+	results := make([]uint32, 32)
 
 	occ := bitset.New(level1Len)
 	var tmpOcc []uint32
-	for i := 0; i < sparseBuckets2.Len(); i++ {
-		bucket, err := sparseBuckets2.Bucket(i)
+	for i := 0; i < buckets.Len(); i++ {
+		bucket, err := buckets.Bucket(i)
 		if err != nil {
 			return fmt.Errorf("buckets.Bucket(%d): %e", i, err)
 		}
@@ -193,8 +186,16 @@ func BuildFlat(f *os.File, it datafile.Iter) error {
 		seed := uint64(1)
 		// we may retry the `trySeed` loop below multiple times -- ensure we
 		// only have to read the keys off disk once
-		keys := make([][]byte, len(bucket.Values))
-		results := make([]int, len(bucket.Values))
+		if len(keys) < len(bucket.Values) {
+			keys = make([][]byte, len(bucket.Values))
+		}
+		if len(results) < len(bucket.Values) {
+			results = make([]uint32, len(bucket.Values))
+		}
+		keys = keys[:len(bucket.Values)]
+		zero.ByteSlices(keys)
+		results = results[:len(bucket.Values)]
+		zero.U32(results)
 
 		for i, n := range bucket.Values {
 			off, err := offsets.Get(int(n))
@@ -221,10 +222,10 @@ func BuildFlat(f *os.File, it datafile.Iter) error {
 			}
 			occ.Set(int(n))
 			tmpOcc = append(tmpOcc, n)
-			results[i] = int(n)
+			results[i] = n
 		}
 		for i, n := range results {
-			if err := level1.Set(n, bucket.Values[i]); err != nil {
+			if err := level1.Set(int(n), bucket.Values[i]); err != nil {
 				return err
 			}
 		}
