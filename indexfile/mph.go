@@ -154,6 +154,9 @@ func BuildFlat(f *os.File, it datafile.Iter) error {
 	for e := range it.Iter() {
 		n := uint32(farm.Hash64WithSeed(e.Key, 0)) & level0Mask
 		sparseBuckets[n] = append(sparseBuckets[n], i)
+		if err := sparseBuckets2.AddToBucket(int64(n), int32(i)); err != nil {
+			return err
+		}
 		var valueBuf [8]byte
 		binary.LittleEndian.PutUint64(valueBuf[:], e.Offset)
 		if _, err := bw.Write(valueBuf[:]); err != nil {
@@ -173,20 +176,28 @@ func BuildFlat(f *os.File, it datafile.Iter) error {
 		}
 	}
 	sort.Sort(bySize(buckets))
-
-	// fmt.Printf("%d sparse buckets -- %d buckets %d-%d occupancy\n", len(sparseBuckets), len(buckets), len(buckets[0].vals), len(buckets[len(buckets)-1].vals))
+	sort.Sort(sparseBuckets2)
 
 	occ := bitset.New(level1Len)
 	var tmpOcc []uint32
-	for _, bucket := range buckets {
+	for i := 0; i < sparseBuckets2.Len(); i++ {
+		bucket, err := sparseBuckets2.Bucket(i)
+		if err != nil {
+			return fmt.Errorf("buckets.Bucket(%d): %e", i, err)
+		}
+		// this is likely our exit condition: we will have some empty buckets
+		// because our hash function isn't perfect
+		if len(bucket.Values) == 0 {
+			break
+		}
 		seed := uint64(1)
 		// we may retry the `trySeed` loop below multiple times -- ensure we
 		// only have to read the keys off disk once
-		keys := make([][]byte, len(bucket.vals))
-		results := make([]int, len(bucket.vals))
+		keys := make([][]byte, len(bucket.Values))
+		results := make([]int, len(bucket.Values))
 
-		for i, n := range bucket.vals {
-			off, err := offsets.Get(n)
+		for i, n := range bucket.Values {
+			off, err := offsets.Get(int(n))
 			if err != nil {
 				return err
 			}
@@ -198,7 +209,7 @@ func BuildFlat(f *os.File, it datafile.Iter) error {
 		}
 	trySeed:
 		tmpOcc = tmpOcc[:0]
-		for i := range bucket.vals {
+		for i := range bucket.Values {
 			key := keys[i]
 			n := uint32(farm.Hash64WithSeed(key, seed)) & level1Mask
 			if occ.IsSet(int(n)) {
@@ -213,11 +224,11 @@ func BuildFlat(f *os.File, it datafile.Iter) error {
 			results[i] = int(n)
 		}
 		for i, n := range results {
-			if err := level1.Set(n, uint32(bucket.vals[i])); err != nil {
+			if err := level1.Set(n, bucket.Values[i]); err != nil {
 				return err
 			}
 		}
-		if err := level0.Set(bucket.n, uint32(seed)); err != nil {
+		if err := level0.Set(bucket.N, uint32(seed)); err != nil {
 			return err
 		}
 	}
