@@ -34,16 +34,18 @@ func (*nopWriter) Write([]byte) (int, error) {
 }
 
 type Writer struct {
-	f     *os.File
-	w     *bufio.Writer
-	off   uint64
-	count uint64
+	f         *os.File
+	w         *bufio.Writer
+	headerBuf []byte
+	off       uint64
+	count     uint64
 }
 
 func NewWriter(f *os.File) (*Writer, error) {
 	w := &Writer{
-		f: f,
-		w: bufio.NewWriterSize(f, defaultBufferSize),
+		f:         f,
+		w:         bufio.NewWriterSize(f, defaultBufferSize),
+		headerBuf: make([]byte, recordHeaderSize),
 	}
 	if err := w.writeHeader(); err != nil {
 		_ = w.Close()
@@ -68,13 +70,13 @@ func (w *Writer) writeHeader() error {
 	return nil
 }
 
-func writeRecordHeader(w *bufio.Writer, key, value []byte) (int, error) {
+func (w *Writer) writeRecordHeader(key, value []byte) (int, error) {
 	checksum := uint32(farm.Hash64(value))
-	var header [recordHeaderSize]byte
+	header := w.headerBuf
 	packedSize := (uint32(len(value)) << 8) | (uint32(len(key)) & 0xff)
 	binary.LittleEndian.PutUint32(header[:4], checksum)
 	binary.LittleEndian.PutUint32(header[4:], packedSize)
-	return w.Write(header[:])
+	return w.w.Write(header[:])
 }
 
 func (w *Writer) Write(key, value []byte) (off uint64, err error) {
@@ -86,7 +88,7 @@ func (w *Writer) Write(key, value []byte) (off uint64, err error) {
 	if len(value) > maximumValueLength {
 		return 0, fmt.Errorf("value length %d greater than %d", len(value), maximumValueLength)
 	}
-	headerWritten, err := writeRecordHeader(w.w, key, value)
+	headerWritten, err := w.writeRecordHeader(key, value)
 	if err != nil {
 		return 0, fmt.Errorf("bufio.Write 1: %e", err)
 	}
