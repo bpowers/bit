@@ -17,8 +17,8 @@ import (
 
 	"github.com/dgryski/go-farm"
 
-	"github.com/bpowers/bit/bitset"
 	"github.com/bpowers/bit/datafile"
+	"github.com/bpowers/bit/internal/bitset"
 	"github.com/bpowers/bit/internal/exp/mmap"
 	"github.com/bpowers/bit/internal/ondisk"
 	"github.com/bpowers/bit/internal/unsafestring"

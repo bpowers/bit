@@ -1,3 +1,7 @@
+// Copyright 2021 The bit Authors and Caleb Spare. All rights reserved.
+// Use of this source code is governed by the MIT License
+// that can be found in the LICENSE file.
+
 package bitset
 
 import (
