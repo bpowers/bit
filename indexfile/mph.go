@@ -168,8 +168,13 @@ func BuildFlat(f *os.File, it datafile.Iter) error {
 
 	sort.Sort(buckets)
 
-	keys := make([][]byte, 32)
-	results := make([]uint32, 32)
+	// the first bucket is the most full after our sort
+	firstBucket, err := buckets.Bucket(0)
+	if err != nil {
+		return err
+	}
+	keys := make([][]byte, len(firstBucket.Values))
+	results := make([]uint32, len(firstBucket.Values))
 
 	occ := bitset.New(level1Len)
 	var tmpOcc []uint32
@@ -186,12 +191,6 @@ func BuildFlat(f *os.File, it datafile.Iter) error {
 		seed := uint64(1)
 		// we may retry the `trySeed` loop below multiple times -- ensure we
 		// only have to read the keys off disk once
-		if len(keys) < len(bucket.Values) {
-			keys = make([][]byte, len(bucket.Values))
-		}
-		if len(results) < len(bucket.Values) {
-			results = make([]uint32, len(bucket.Values))
-		}
 		keys = keys[:len(bucket.Values)]
 		zero.ByteSlices(keys)
 		results = results[:len(bucket.Values)]
