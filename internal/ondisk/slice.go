@@ -224,7 +224,7 @@ func (s *BucketSlice) Bucket(off int) (Bucket, error) {
 		panic(fmt.Errorf("invariant broken: bucket %d overflowed", off))
 	}
 	values := s.valuesBuf[0:valuesLen]
-	zero.U32(values)
+	zero.Uint32(values)
 	for i := 0; i < valuesLen; i++ {
 		v := binary.LittleEndian.Uint32(buf[8+4*i : 8+4*i+4])
 		values[i] = v

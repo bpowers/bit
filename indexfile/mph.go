@@ -194,7 +194,7 @@ func BuildFlat(f *os.File, it datafile.Iter) error {
 		keys = keys[:len(bucket.Values)]
 		zero.ByteSlices(keys)
 		results = results[:len(bucket.Values)]
-		zero.U32(results)
+		zero.Uint32(results)
 
 		for i, n := range bucket.Values {
 			off, err := offsets.Get(int(n))
