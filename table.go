@@ -137,7 +137,7 @@ func New(dataPath string) (*Table, error) {
 
 func (t *Table) GetString(key string) ([]byte, bool) {
 	off := t.idx.MaybeLookupString(key)
-	expectedKey, value, err := t.data.ReadAt(off)
+	expectedKey, value, err := t.data.ReadAt(int64(off))
 	if err != nil {
 		return nil, false
 	}
@@ -151,7 +151,7 @@ func (t *Table) GetString(key string) ([]byte, bool) {
 
 func (t *Table) Get(key []byte) ([]byte, bool) {
 	off := t.idx.MaybeLookup(key)
-	expectedKey, value, err := t.data.ReadAt(off)
+	expectedKey, value, err := t.data.ReadAt(int64(off))
 	if err != nil {
 		return nil, false
 	}

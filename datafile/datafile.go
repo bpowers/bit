@@ -132,7 +132,7 @@ func (w *Writer) Close() error {
 
 type Reader struct {
 	mmap       *mmap.ReaderAt
-	entryCount uint64
+	entryCount int64
 }
 
 func NewMMapReaderWithPath(path string) (*Reader, error) {
@@ -155,7 +155,7 @@ func NewMMapReaderWithPath(path string) (*Reader, error) {
 		return nil, fmt.Errorf("this version of the bit library can only read v1 data files; found v%d", fileFormatVersion)
 	}
 
-	entryCount := binary.LittleEndian.Uint64(m.Data()[8:16])
+	entryCount := int64(binary.LittleEndian.Uint64(m.Data()[8:16]))
 
 	r := &Reader{
 		mmap:       m,
@@ -164,24 +164,24 @@ func NewMMapReaderWithPath(path string) (*Reader, error) {
 	return r, nil
 }
 
-func (r *Reader) Len() uint64 {
+func (r *Reader) Len() int64 {
 	return r.entryCount
 }
 
-func (r *Reader) ReadAt(off uint64) (key, value []byte, err error) {
+func (r *Reader) ReadAt(off int64) (key, value []byte, err error) {
 	m := r.mmap.Data()
 	mLen := len(m)
-	if off+recordHeaderSize > uint64(len(m)) {
+	if off+recordHeaderSize > int64(len(m)) {
 		return nil, nil, fmt.Errorf("off %d beyond bounds (%d)", off, mLen)
 	}
 	header := m[off : off+recordHeaderSize]
 	// bounds check elimination
 	_ = header[recordHeaderSize-1]
 	expectedChecksum := binary.LittleEndian.Uint32(header[:4])
-	packedLen := uint64(binary.LittleEndian.Uint32(header[4:]))
+	packedLen := int64(binary.LittleEndian.Uint32(header[4:]))
 	valueLen := packedLen >> 8
 	keyLen := packedLen & 0xff
-	if off+recordHeaderSize+valueLen+keyLen > uint64(mLen) {
+	if off+recordHeaderSize+valueLen+keyLen > int64(mLen) {
 		return nil, nil, fmt.Errorf("off %d + keyLen %d + valueLen %d beyond bounds (%d)", off, keyLen, valueLen, mLen)
 	}
 	key = m[off+recordHeaderSize : off+recordHeaderSize+keyLen]
@@ -202,15 +202,15 @@ func (r *Reader) Iter() Iter {
 type IterItem struct {
 	Key    []byte
 	Value  []byte
-	Offset uint64
+	Offset int64
 }
 
 // Iter iterates over the contents in a logfile.  Make sure to `defer it.Close()`.
 type Iter interface {
 	Close()
 	Iter() <-chan IterItem
-	Len() uint64
-	ReadAt(off uint64) (key []byte, value []byte, err error)
+	Len() int64
+	ReadAt(off int64) (key []byte, value []byte, err error)
 }
 
 type iter struct {
@@ -252,7 +252,7 @@ func (i *iter) Iter() <-chan IterItem {
 func (i *iter) producer(ctx context.Context, ch chan<- IterItem) {
 	defer close(ch)
 
-	off := uint64(fileHeaderSize)
+	off := int64(fileHeaderSize)
 	for {
 		k, v, err := i.r.ReadAt(off)
 		if err != nil {
@@ -268,14 +268,14 @@ func (i *iter) producer(ctx context.Context, ch chan<- IterItem) {
 		case <-ctx.Done():
 			break
 		}
-		off += recordHeaderSize + uint64(len(k)) + uint64(len(v))
+		off += recordHeaderSize + int64(len(k)) + int64(len(v))
 	}
 }
 
-func (i *iter) Len() uint64 {
+func (i *iter) Len() int64 {
 	return i.r.Len()
 }
 
-func (i *iter) ReadAt(off uint64) (key []byte, value []byte, err error) {
+func (i *iter) ReadAt(off int64) (key []byte, value []byte, err error) {
 	return i.r.ReadAt(off)
 }

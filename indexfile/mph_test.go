@@ -45,7 +45,7 @@ func (i *testIter) Iter() <-chan datafile.IterItem {
 func (i *testIter) producer(ctx context.Context, ch chan<- datafile.IterItem) {
 	defer close(ch)
 
-	for off := uint64(0); off < uint64(len(i.items)); off++ {
+	for off := int64(0); off < int64(len(i.items)); off++ {
 		item := i.items[off]
 		iitem := datafile.IterItem{
 			Key:    []byte(item.Key),
@@ -60,12 +60,12 @@ func (i *testIter) producer(ctx context.Context, ch chan<- datafile.IterItem) {
 	}
 }
 
-func (i *testIter) Len() uint64 {
-	return uint64(len(i.items))
+func (i *testIter) Len() int64 {
+	return int64(len(i.items))
 }
 
-func (i *testIter) ReadAt(off uint64) (key []byte, value []byte, err error) {
-	if off >= uint64(len(i.items)) {
+func (i *testIter) ReadAt(off int64) (key []byte, value []byte, err error) {
+	if off >= int64(len(i.items)) {
 		return nil, nil, errors.New("off too big")
 	}
 	item := i.items[off]

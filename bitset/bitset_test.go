@@ -10,7 +10,7 @@ func TestBitset(t *testing.T) {
 	b := New(128)
 
 	require.Equal(t, 2, len(b.bits))
-	require.Equal(t, 128, b.length)
+	require.Equal(t, int64(128), b.length)
 
 	// should do nothing
 	b.Set(132)
@@ -29,7 +29,7 @@ func TestBitset(t *testing.T) {
 	b.Clear(8)
 	require.Equal(t, zero, b.bits)
 
-	for i := 0; i < 128; i++ {
+	for i := int64(0); i < 128; i++ {
 		b.Set(i)
 	}
 

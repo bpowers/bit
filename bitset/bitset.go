@@ -2,10 +2,10 @@ package bitset
 
 type Bitset struct {
 	bits   []uint64
-	length int
+	length int64
 }
 
-func (b *Bitset) Set(off int) {
+func (b *Bitset) Set(off int64) {
 	if off >= b.length {
 		return
 	}
@@ -15,7 +15,7 @@ func (b *Bitset) Set(off int) {
 	*u64 |= 1 << bitOff
 }
 
-func (b *Bitset) Clear(off int) {
+func (b *Bitset) Clear(off int64) {
 	if off >= b.length {
 		return
 	}
@@ -25,7 +25,7 @@ func (b *Bitset) Clear(off int) {
 	*u64 &= ^(1 << bitOff)
 }
 
-func (b *Bitset) IsSet(off int) bool {
+func (b *Bitset) IsSet(off int64) bool {
 	if off >= b.length {
 		return false
 	}
@@ -35,7 +35,7 @@ func (b *Bitset) IsSet(off int) bool {
 	return *u64&(1<<bitOff) != 0
 }
 
-func New(length int) *Bitset {
+func New(length int64) *Bitset {
 	sliceLen := (length + 63) / 64
 	return &Bitset{
 		bits:   make([]uint64, sliceLen),

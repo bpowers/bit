@@ -37,7 +37,7 @@ var (
 // Table is an immutable hash table that provides constant-time lookups of key
 // indices using a minimal perfect hash.
 type Table struct {
-	offsets    []uint64
+	offsets    []int64
 	level0     []uint32 // power of 2 size
 	level0Mask uint32   // len(Level0) - 1
 	level1     []uint32 // power of 2 size >= len(keys)
@@ -47,7 +47,7 @@ type Table struct {
 // Build builds a Table from keys using the "Hash, displace, and compress"
 // algorithm described in http://cmph.sourceforge.net/papers/esa09.pdf.
 func Build(it datafile.Iter) *Table {
-	entryLen := int(it.Len())
+	entryLen := it.Len()
 	var (
 		level0        = make([]uint32, nextPow2(entryLen/4))
 		level0Mask    = uint32(len(level0) - 1)
@@ -56,7 +56,7 @@ func Build(it datafile.Iter) *Table {
 		sparseBuckets = make([][]int, len(level0))
 	)
 
-	offsets := make([]uint64, entryLen)
+	offsets := make([]int64, entryLen)
 
 	i := 0
 	for e := range it.Iter() {
@@ -73,7 +73,7 @@ func Build(it datafile.Iter) *Table {
 	}
 	sort.Sort(bySize(buckets))
 
-	occ := bitset.New(len(level1))
+	occ := bitset.New(int64(len(level1)))
 	var tmpOcc []uint32
 	for _, bucket := range buckets {
 		seed := uint64(1)
@@ -86,14 +86,14 @@ func Build(it datafile.Iter) *Table {
 				panic(err)
 			}
 			n := uint32(farm.Hash64WithSeed(key, seed)) & level1Mask
-			if occ.IsSet(int(n)) {
+			if occ.IsSet(int64(n)) {
 				for _, n := range tmpOcc {
-					occ.Clear(int(n))
+					occ.Clear(int64(n))
 				}
 				seed++
 				goto trySeed
 			}
-			occ.Set(int(n))
+			occ.Set(int64(n))
 			tmpOcc = append(tmpOcc, n)
 			level1[n] = uint32(i)
 		}
@@ -113,7 +113,7 @@ func Build(it datafile.Iter) *Table {
 // algorithm described in http://cmph.sourceforge.net/papers/esa09.pdf.
 func BuildFlat(f *os.File, it datafile.Iter) error {
 	var (
-		entryLen  = int(it.Len())
+		entryLen  = int64(it.Len())
 		level0Len = nextPow2(entryLen / 4)
 		level1Len = nextPow2(entryLen)
 
@@ -129,9 +129,9 @@ func BuildFlat(f *os.File, it datafile.Iter) error {
 		return fmt.Errorf("truncate: %e", err)
 	}
 	var (
-		offsets = ondisk.NewU64Slice(f, entryLen, fileHeaderSize)
-		level0  = ondisk.NewU32Slice(f, level0Len, int64(fileHeaderSize+entryLen*8))
-		level1  = ondisk.NewU32Slice(f, level1Len, int64(fileHeaderSize+entryLen*8+level0Len*4))
+		offsets = ondisk.NewUint64Array(f, entryLen, fileHeaderSize)
+		level0  = ondisk.NewUint32Array(f, level0Len, int64(fileHeaderSize+entryLen*8))
+		level1  = ondisk.NewUint32Array(f, level1Len, int64(fileHeaderSize+entryLen*8+level0Len*4))
 	)
 
 	bw := bufio.NewWriterSize(f, 4*1024*1024)
@@ -155,7 +155,7 @@ func BuildFlat(f *os.File, it datafile.Iter) error {
 			return err
 		}
 		var valueBuf [8]byte
-		binary.LittleEndian.PutUint64(valueBuf[:], e.Offset)
+		binary.LittleEndian.PutUint64(valueBuf[:], uint64(e.Offset))
 		if _, err := bw.Write(valueBuf[:]); err != nil {
 			return err
 		}
@@ -197,11 +197,11 @@ func BuildFlat(f *os.File, it datafile.Iter) error {
 		zero.Uint32(results)
 
 		for i, n := range bucket.Values {
-			off, err := offsets.Get(int(n))
+			off, err := offsets.Get(int64(n))
 			if err != nil {
 				return err
 			}
-			key, _, err := it.ReadAt(off)
+			key, _, err := it.ReadAt(int64(off))
 			if err != nil {
 				return err
 			}
@@ -212,19 +212,19 @@ func BuildFlat(f *os.File, it datafile.Iter) error {
 		for i := range bucket.Values {
 			key := keys[i]
 			n := uint32(farm.Hash64WithSeed(key, seed)) & level1Mask
-			if occ.IsSet(int(n)) {
+			if occ.IsSet(int64(n)) {
 				for _, n := range tmpOcc {
-					occ.Clear(int(n))
+					occ.Clear(int64(n))
 				}
 				seed++
 				goto trySeed
 			}
-			occ.Set(int(n))
+			occ.Set(int64(n))
 			tmpOcc = append(tmpOcc, n)
 			results[i] = n
 		}
 		for i, n := range results {
-			if err := level1.Set(int(n), bucket.Values[i]); err != nil {
+			if err := level1.Set(int64(n), bucket.Values[i]); err != nil {
 				return err
 			}
 		}
@@ -236,8 +236,8 @@ func BuildFlat(f *os.File, it datafile.Iter) error {
 	return nil
 }
 
-func nextPow2(n int) int {
-	return 1 << (32 - bits.LeadingZeros32(uint32(n)))
+func nextPow2(n int64) int64 {
+	return 1 << (64 - bits.LeadingZeros64(uint64(n)))
 }
 
 // MaybeLookupString searches for s in t and returns its potential index.
@@ -251,7 +251,7 @@ func (t *Table) MaybeLookup(b []byte) uint64 {
 	seed := uint64(t.level0[i0])
 	i1 := uint32(farm.Hash64WithSeed(b, seed)) & t.level1Mask
 	n := t.level1[i1]
-	return t.offsets[int(n)]
+	return uint64(t.offsets[int(n)])
 }
 
 type indexBucket struct {
@@ -265,8 +265,10 @@ func (s bySize) Len() int           { return len(s) }
 func (s bySize) Less(i, j int) bool { return len(s[i].vals) > len(s[j].vals) }
 func (s bySize) Swap(i, j int)      { s[i], s[j] = s[j], s[i] }
 
-func writeFileHeader(w io.Writer, offsetsLen, level0Len, level1Len int) error {
+func writeFileHeader(w io.Writer, offsetsLen, level0Len, level1Len int64) error {
 	var buf [fileHeaderSize]byte
+
+	// TODO: ensure lengths fit in uint32s
 
 	binary.LittleEndian.PutUint32(buf[0:4], magicIndexHeader)
 	binary.LittleEndian.PutUint32(buf[4:8], 1) // file version
@@ -285,7 +287,7 @@ func (t *Table) Write(w io.Writer) error {
 		_ = bw.Flush()
 	}()
 
-	if err := writeFileHeader(bw, len(t.offsets), len(t.level0), len(t.level1)); err != nil {
+	if err := writeFileHeader(bw, int64(len(t.offsets)), int64(len(t.level0)), int64(len(t.level1))); err != nil {
 		return fmt.Errorf("writeFileHeader: %e", err)
 	}
 
