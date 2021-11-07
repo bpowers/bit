@@ -10,12 +10,14 @@ import (
 	"os"
 )
 
+// Uint32Array is an array backed by an on-disk file.
 type Uint32Array struct {
 	f       *os.File
 	elemLen int64 // length in number of elements
 	byteOff int64 // offset in bytes of the start of this slice
 }
 
+// NewUint32Array returns a new array backed by the specified on-disk file.
 func NewUint32Array(f *os.File, len, fileOff int64) *Uint32Array {
 	return &Uint32Array{
 		f:       f,
@@ -24,6 +26,7 @@ func NewUint32Array(f *os.File, len, fileOff int64) *Uint32Array {
 	}
 }
 
+// Set sets the value of item i, possibly returning an error.
 func (s *Uint32Array) Set(i int64, value uint32) error {
 	if i < 0 || i >= s.elemLen {
 		return fmt.Errorf("offset (%d) out of range (lenen %d)", i, s.elemLen)
@@ -34,6 +37,7 @@ func (s *Uint32Array) Set(i int64, value uint32) error {
 	return err
 }
 
+// Get gets the value of item i, possibly returning an error.
 func (s *Uint32Array) Get(i int64) (uint32, error) {
 	if i < 0 || i >= s.elemLen {
 		return 0, fmt.Errorf("offset (%d) out of range (len %d)", i, s.elemLen)
@@ -46,12 +50,14 @@ func (s *Uint32Array) Get(i int64) (uint32, error) {
 	return binary.LittleEndian.Uint32(buf[:]), nil
 }
 
+// Uint64Array is an array backed by an on-disk file.
 type Uint64Array struct {
 	f       *os.File
 	elemLen int64 // length in number of elements
 	byteOff int64 // offset in bytes of the start of this slice
 }
 
+// NewUint64Array returns a new array backed by the specified on-disk file.
 func NewUint64Array(f *os.File, len int64, fileOff int64) *Uint64Array {
 	return &Uint64Array{
 		f:       f,
@@ -60,6 +66,7 @@ func NewUint64Array(f *os.File, len int64, fileOff int64) *Uint64Array {
 	}
 }
 
+// Set sets the value of item i, possibly returning an error.
 func (s *Uint64Array) Set(i int64, value uint64) error {
 	if i < 0 || i >= s.elemLen {
 		return fmt.Errorf("offset (%d) out of range (elemLen %d)", i, s.elemLen)
@@ -70,6 +77,7 @@ func (s *Uint64Array) Set(i int64, value uint64) error {
 	return err
 }
 
+// Get gets the value of item i, possibly returning an error.
 func (s *Uint64Array) Get(i int64) (uint64, error) {
 	if i < 0 || i >= s.elemLen {
 		return 0, fmt.Errorf("offset (%d) out of range (elemLen %d)", i, s.elemLen)
