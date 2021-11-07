@@ -2,6 +2,8 @@
 // Use of this source code is governed by the MIT License
 // that can be found in the LICENSE file.
 
+// Package bit (Big Immutable Table) provides a way to build a constant hashmap/table,
+// and then use that hashmap without reading/hydrating it into your program's heap.
 package bit
 
 import (
@@ -15,6 +17,7 @@ import (
 	"github.com/bpowers/bit/indexfile"
 )
 
+// Builder is used to construct a big immutable table from key/value pairs.
 type Builder struct {
 	resultPath string
 	dataFile   *os.File
@@ -25,6 +28,8 @@ var (
 	errorKeyTooBig = errors.New("we only support keys < 256 bytes in length")
 )
 
+// NewBuilder creates a Builder that can be used to construct a Table.  Building should happen
+// once, and the table
 func NewBuilder(dataFilePath string) (*Builder, error) {
 	// we want to write to a new file and do an atomic rename when we're done on disk
 	dataFilePath, err := filepath.Abs(dataFilePath)
@@ -47,6 +52,7 @@ func NewBuilder(dataFilePath string) (*Builder, error) {
 	}, nil
 }
 
+// Put adds a key/value pair to the table.  Duplicate keys result in an error at Finalize time.
 func (b *Builder) Put(k, v []byte) error {
 	kLen := len(k)
 	if kLen >= 256 {
@@ -61,6 +67,7 @@ func (b *Builder) Put(k, v []byte) error {
 	return nil
 }
 
+// Finalize flushes the table to disk and builds an index to efficiently randomly access entries.
 func (b *Builder) Finalize() (*Table, error) {
 	if err := b.dioWriter.Close(); err != nil {
 		return nil, fmt.Errorf("recordio.Close: %e", err)
@@ -115,11 +122,18 @@ func (b *Builder) Finalize() (*Table, error) {
 	return New(dataPath)
 }
 
+// Table represents an on-disk big immutable table.  The contents of the table are `mmap(2)`'d
+// into your process's address space, which (1) lets the OS manage keeping hot parts of the
+// table in its LRU-based page cache, and (2) enables you to access big immutable tables whose
+// contents are larger than you have RAM+swap for.  It is robust to corruption -- we validate
+// that (a) keys passed to Get exactly match the key in the entry, and (b) the value's checksum
+// matches one we stored at table build time.
 type Table struct {
 	data *datafile.Reader
 	idx  *indexfile.FlatTable
 }
 
+// New opens a bit table for reading, returning an error if things go wrong.
 func New(dataPath string) (*Table, error) {
 	r, err := datafile.NewMMapReaderWithPath(dataPath)
 	if err != nil {
@@ -135,6 +149,8 @@ func New(dataPath string) (*Table, error) {
 	}, nil
 }
 
+// GetString returns a value for the given string key, if it exists in the table.
+// The value is a []byte, but MUST NOT be written to.
 func (t *Table) GetString(key string) ([]byte, bool) {
 	off := t.idx.MaybeLookupString(key)
 	expectedKey, value, err := t.data.ReadAt(int64(off))
@@ -149,6 +165,8 @@ func (t *Table) GetString(key string) ([]byte, bool) {
 	return value, true
 }
 
+// Get returns a value for the given []byte key, if it exists in the table.
+// The value is a []byte, but MUST NOT be written to.
 func (t *Table) Get(key []byte) ([]byte, bool) {
 	off := t.idx.MaybeLookup(key)
 	expectedKey, value, err := t.data.ReadAt(int64(off))
