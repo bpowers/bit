@@ -58,8 +58,6 @@ func (b *Builder) Put(k, v []byte) error {
 	if kLen >= 256 {
 		return errorKeyTooBig
 	}
-	// copy the key (by allocating a string), because it could point into
-	// e.g. a bufio buffer
 	_, err := b.dioWriter.Write(k, v)
 	if err != nil {
 		return err
@@ -130,7 +128,7 @@ func (b *Builder) Finalize() (*Table, error) {
 // matches one we stored at table build time.
 type Table struct {
 	data *datafile.Reader
-	idx  *indexfile.FlatTable
+	idx  *indexfile.Table
 }
 
 // New opens a bit table for reading, returning an error if things go wrong.
@@ -139,9 +137,9 @@ func New(dataPath string) (*Table, error) {
 	if err != nil {
 		return nil, fmt.Errorf("datafile.NewMMapReaderWithPath(%s): %e", dataPath, err)
 	}
-	idx, err := indexfile.NewFlatTable(dataPath + ".index")
+	idx, err := indexfile.NewTable(dataPath + ".index")
 	if err != nil {
-		return nil, fmt.Errorf("indexfile.NewFlatTable: %e", err)
+		return nil, fmt.Errorf("indexfile.NewTable: %e", err)
 	}
 	return &Table{
 		data: r,

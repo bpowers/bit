@@ -49,3 +49,7 @@ As seen in the above benchmark, the performance cost for this is negligible, and
 
 A `*bit.Table` is a pair of on-disk files: a log of key/value pairs (and some metadata, like a checksum of the value), and an index for efficient random lookup in that log of key/value pairs.
 In particular the index is a minimal perfect hash based on [cespare/mph](https://github.com/cespare/mph).
+
+Currently, we have a restriction that keys must be under 256 bytes in length.
+Values can be up to 16 MB in length.
+These restrictions aren't fundamental: we would just need to allocate more metadata bookkeeping space per entry in the `datafile` (currently we pack both sizes into a uint32).

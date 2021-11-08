@@ -17,6 +17,8 @@ import (
 	"sync"
 	"testing"
 
+	"github.com/stretchr/testify/require"
+
 	"github.com/dgryski/go-farm"
 
 	"github.com/bpowers/bit/datafile"
@@ -80,6 +82,21 @@ func (i *testIter) ReadAt(off int64) (key []byte, value []byte, err error) {
 	return []byte(item.Key), []byte(item.Value), nil
 }
 
+func TestNextPow2(t *testing.T) {
+	for _, testcase := range []struct {
+		input    int64
+		expected int64
+	}{
+		{1, 2},
+		{2, 4},
+		{3, 4},
+		{31, 32},
+	} {
+		actual := nextPow2(testcase.input)
+		require.Equal(t, testcase.expected, actual)
+	}
+}
+
 func TestBuild_simple(t *testing.T) {
 	testTable(t, []string{"foo", "foo2", "bar", "baz"}, []string{"quux"})
 }
@@ -109,7 +126,7 @@ func testTable(t *testing.T, keys []string, extra []string) {
 	if err := Build(f, it); err != nil {
 		panic(err)
 	}
-	table, err := NewFlatTable(f.Name())
+	table, err := NewTable(f.Name())
 	if err != nil {
 		panic(err)
 	}
@@ -124,8 +141,8 @@ func testTable(t *testing.T, keys []string, extra []string) {
 var (
 	words          []testEntry
 	wordsOnce      sync.Once
-	benchTable     *Table
-	benchFlatTable *FlatTable
+	benchTable     *InMemoryTable
+	benchFlatTable *Table
 )
 
 func tmpTestfile() *os.File {
@@ -222,7 +239,7 @@ func loadBenchTable() {
 			panic(err)
 		}
 		var err error
-		benchFlatTable, err = NewFlatTable(f.Name())
+		benchFlatTable, err = NewTable(f.Name())
 		if err != nil {
 			panic(err)
 		}
@@ -248,9 +265,9 @@ func loadDict(dict string) ([]testEntry, error) {
 	return words, nil
 }
 
-// Table is an immutable hash table that provides constant-time lookups of key
+// InMemoryTable is an immutable hash table that provides constant-time lookups of key
 // indices using a minimal perfect hash.
-type Table struct {
+type InMemoryTable struct {
 	offsets    []int64
 	level0     []uint32 // power of 2 size
 	level0Mask uint32   // len(Level0) - 1
@@ -258,9 +275,9 @@ type Table struct {
 	level1Mask uint32   // len(Level1) - 1
 }
 
-// BuildInMemory builds a Table from keys using the "Hash, displace, and compress"
+// BuildInMemory builds a InMemoryTable from keys using the "Hash, displace, and compress"
 // algorithm described in http://cmph.sourceforge.net/papers/esa09.pdf.
-func BuildInMemory(it datafile.Iter) *Table {
+func BuildInMemory(it datafile.Iter) *InMemoryTable {
 	entryLen := it.Len()
 	var (
 		level0        = make([]uint32, nextPow2(entryLen/4))
@@ -314,7 +331,7 @@ func BuildInMemory(it datafile.Iter) *Table {
 		level0[bucket.n] = uint32(seed)
 	}
 
-	return &Table{
+	return &InMemoryTable{
 		offsets:    offsets,
 		level0:     level0,
 		level0Mask: level0Mask,
@@ -324,12 +341,12 @@ func BuildInMemory(it datafile.Iter) *Table {
 }
 
 // MaybeLookupString searches for s in t and returns its potential index.
-func (t *Table) MaybeLookupString(s string) uint64 {
+func (t *InMemoryTable) MaybeLookupString(s string) uint64 {
 	return t.MaybeLookup(unsafestring.ToBytes(s))
 }
 
 // MaybeLookup searches for b in t and returns its potential index.
-func (t *Table) MaybeLookup(b []byte) uint64 {
+func (t *InMemoryTable) MaybeLookup(b []byte) uint64 {
 	i0 := uint32(farm.Hash64WithSeed(b, 0)) & t.level0Mask
 	seed := uint64(t.level0[i0])
 	i1 := uint32(farm.Hash64WithSeed(b, seed)) & t.level1Mask
@@ -338,7 +355,7 @@ func (t *Table) MaybeLookup(b []byte) uint64 {
 }
 
 // Write writes the table out to the given file
-func (t *Table) Write(w io.Writer) error {
+func (t *InMemoryTable) Write(w io.Writer) error {
 	bw := bufio.NewWriterSize(w, 4*1024*1024)
 	defer func() {
 		_ = bw.Flush()
@@ -371,3 +388,14 @@ func (t *Table) Write(w io.Writer) error {
 
 	return nil
 }
+
+type indexBucket struct {
+	n    int
+	vals []int
+}
+
+type bySize []indexBucket
+
+func (s bySize) Len() int           { return len(s) }
+func (s bySize) Less(i, j int) bool { return len(s[i].vals) > len(s[j].vals) }
+func (s bySize) Swap(i, j int)      { s[i], s[j] = s[j], s[i] }
