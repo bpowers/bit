@@ -164,10 +164,12 @@ func (s *BucketSlice) Bucket(off int) (Bucket, error) {
 	}, nil
 }
 
+// Len is used to fulfil the sort.Interface.
 func (s *BucketSlice) Len() int {
 	return int(s.nBuckets)
 }
 
+// Less is used to fulfil the sort.Interface.
 func (s *BucketSlice) Less(i, j int) bool {
 	l := bucketLen(s.bucketCap)
 	if len(s.bucketBuf) < int(l*2) {
@@ -188,8 +190,11 @@ func (s *BucketSlice) Less(i, j int) bool {
 	jLen := int(binary.LittleEndian.Uint32(jBuf[4:8]))
 	return iLen > jLen
 }
+
+// Swap is used to fulfil the sort.Interface.
 func (s *BucketSlice) Swap(i, j int) {
 	l := bucketLen(s.bucketCap)
+	// use a single []byte buffer, cleaved in two
 	if len(s.bucketBuf) < int(l*2) {
 		s.bucketBuf = make([]byte, l*2)
 	}
