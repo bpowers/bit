@@ -50,7 +50,7 @@ func readBucket(f *os.File, b []byte, off, bucketCap int64) error {
 	if int64(len(b)) < bucketSize {
 		return fmt.Errorf("readBucket(f, b, %d, %d): elemLen(b) (%d) too short for bucketCap", off, bucketCap, len(b))
 	}
-	_, err := f.ReadAt(b, int64(off*bucketSize))
+	_, err := f.ReadAt(b, off*bucketSize)
 	return err
 }
 
@@ -70,12 +70,19 @@ func (s *BucketSlice) setBucketCapacity(newBucketCap int64) error {
 
 	s.bucketCap = newBucketCap
 
-	if err := s.f.Truncate(s.nBuckets * newBucketSize); err != nil {
+	fileByteLen := s.nBuckets * newBucketSize
+	if err := s.f.Truncate(fileByteLen); err != nil {
 		return fmt.Errorf("f.Truncate: %e", err)
 	}
 
 	// previously we were an empty file; no buckets to update/resize
 	if oldBucketCap == 0 {
+		// page in the file now, which in practice slightly improves performance
+		for i := int64(0); i < fileByteLen; i += 1024 {
+			if _, err := s.f.WriteAt(bucketBuf[:1], i); err != nil {
+				return err
+			}
+		}
 		return nil
 	}
 
@@ -101,15 +108,19 @@ func (s *BucketSlice) AddToBucket(off int64, n int32) error {
 	if off < 0 || off >= s.nBuckets {
 		return fmt.Errorf("byteOff %d out of range", off)
 	}
+	// reuse a buffer here to avoid an allocation
 	bucketBuf := s.bucketBuf[0:bucketLen(s.bucketCap)]
 	zero.Bytes(bucketBuf)
 	if err := readBucket(s.f, bucketBuf, off, s.bucketCap); err != nil {
 		return fmt.Errorf("readBucket: %e", err)
 	}
+
 	bucketOff := binary.LittleEndian.Uint32(bucketBuf[0:4])
 	if bucketOff == 0 && off != 0 {
 		binary.LittleEndian.PutUint32(bucketBuf[0:4], uint32(off))
 	}
+
+	// if we would overflow the bucket capacity, resize the whole array of buckets
 	valuesLen := int64(binary.LittleEndian.Uint32(bucketBuf[4:8]))
 	if valuesLen >= s.bucketCap {
 		if err := s.setBucketCapacity(s.bucketCap * 2); err != nil {
@@ -121,6 +132,7 @@ func (s *BucketSlice) AddToBucket(off int64, n int32) error {
 			return fmt.Errorf("readBucket: %e", err)
 		}
 	}
+	// finally update the length of items we have, append the value, and write the bucket back out
 	binary.LittleEndian.PutUint32(bucketBuf[4:8], uint32(valuesLen+1))
 	binary.LittleEndian.PutUint32(bucketBuf[8+4*valuesLen:8+4*valuesLen+4], uint32(n))
 	_, err := s.f.WriteAt(bucketBuf, off*int64(len(bucketBuf)))
