@@ -96,7 +96,7 @@ func (b *Builder) Finalize() (*Table, error) {
 
 	it := r.Iter()
 	defer it.Close()
-	if err := indexfile.BuildFlat(f, it); err != nil {
+	if err := indexfile.Build(f, it); err != nil {
 		_ = f.Close()
 		_ = os.Remove(f.Name())
 		return nil, fmt.Errorf("idx.Write: %e", err)

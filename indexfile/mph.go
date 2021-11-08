@@ -34,84 +34,9 @@ var (
 	errorDuplicateKey = errors.New("duplicate keys aren't supported")
 )
 
-// Table is an immutable hash table that provides constant-time lookups of key
-// indices using a minimal perfect hash.
-type Table struct {
-	offsets    []int64
-	level0     []uint32 // power of 2 size
-	level0Mask uint32   // len(Level0) - 1
-	level1     []uint32 // power of 2 size >= len(keys)
-	level1Mask uint32   // len(Level1) - 1
-}
-
 // Build builds a Table from keys using the "Hash, displace, and compress"
 // algorithm described in http://cmph.sourceforge.net/papers/esa09.pdf.
-func Build(it datafile.Iter) *Table {
-	entryLen := it.Len()
-	var (
-		level0        = make([]uint32, nextPow2(entryLen/4))
-		level0Mask    = uint32(len(level0) - 1)
-		level1        = make([]uint32, nextPow2(entryLen))
-		level1Mask    = uint32(len(level1) - 1)
-		sparseBuckets = make([][]int, len(level0))
-	)
-
-	offsets := make([]int64, entryLen)
-
-	i := 0
-	for e := range it.Iter() {
-		n := uint32(farm.Hash64WithSeed(e.Key, 0)) & level0Mask
-		sparseBuckets[n] = append(sparseBuckets[n], i)
-		offsets[i] = e.Offset
-		i++
-	}
-	var buckets []indexBucket
-	for n, vals := range sparseBuckets {
-		if len(vals) > 0 {
-			buckets = append(buckets, indexBucket{n, vals})
-		}
-	}
-	sort.Sort(bySize(buckets))
-
-	occ := bitset.New(int64(len(level1)))
-	var tmpOcc []uint32
-	for _, bucket := range buckets {
-		seed := uint64(1)
-	trySeed:
-		tmpOcc = tmpOcc[:0]
-		for _, i := range bucket.vals {
-			key, _, err := it.ReadAt(offsets[i])
-			if err != nil {
-				// TODO: fixme
-				panic(err)
-			}
-			n := uint32(farm.Hash64WithSeed(key, seed)) & level1Mask
-			if occ.IsSet(int64(n)) {
-				for _, n := range tmpOcc {
-					occ.Clear(int64(n))
-				}
-				seed++
-				goto trySeed
-			}
-			occ.Set(int64(n))
-			tmpOcc = append(tmpOcc, n)
-			level1[n] = uint32(i)
-		}
-		level0[bucket.n] = uint32(seed)
-	}
-
-	return &Table{
-		offsets:    offsets,
-		level0:     level0,
-		level0Mask: level0Mask,
-		level1:     level1,
-		level1Mask: level1Mask,
-	}
-}
-
-// BuildFlat builds a Table from keys using the "Hash, displace, and compress"
-// algorithm described in http://cmph.sourceforge.net/papers/esa09.pdf.
-func BuildFlat(f *os.File, it datafile.Iter) error {
+func Build(f *os.File, it datafile.Iter) error {
 	var (
 		entryLen  = int64(it.Len())
 		level0Len = nextPow2(entryLen / 4)
@@ -240,20 +165,6 @@ func nextPow2(n int64) int64 {
 	return 1 << (64 - bits.LeadingZeros64(uint64(n)))
 }
 
-// MaybeLookupString searches for s in t and returns its potential index.
-func (t *Table) MaybeLookupString(s string) uint64 {
-	return t.MaybeLookup(unsafestring.ToBytes(s))
-}
-
-// MaybeLookup searches for b in t and returns its potential index.
-func (t *Table) MaybeLookup(b []byte) uint64 {
-	i0 := uint32(farm.Hash64WithSeed(b, 0)) & t.level0Mask
-	seed := uint64(t.level0[i0])
-	i1 := uint32(farm.Hash64WithSeed(b, seed)) & t.level1Mask
-	n := t.level1[i1]
-	return uint64(t.offsets[int(n)])
-}
-
 type indexBucket struct {
 	n    int
 	vals []int
@@ -278,41 +189,6 @@ func writeFileHeader(w io.Writer, offsetsLen, level0Len, level1Len int64) error 
 
 	_, err := w.Write(buf[:])
 	return err
-}
-
-// Write writes the table out to the given file
-func (t *Table) Write(w io.Writer) error {
-	bw := bufio.NewWriterSize(w, 4*1024*1024)
-	defer func() {
-		_ = bw.Flush()
-	}()
-
-	if err := writeFileHeader(bw, int64(len(t.offsets)), int64(len(t.level0)), int64(len(t.level1))); err != nil {
-		return fmt.Errorf("writeFileHeader: %e", err)
-	}
-
-	// we should be 8-byte aligned at this point (file header is 128-bytes wide)
-
-	// write offsets first, while we're sure we're 8-byte aligned
-	for _, i := range t.offsets {
-		if err := binary.Write(bw, binary.LittleEndian, i); err != nil {
-			return err
-		}
-	}
-
-	for _, i := range t.level0 {
-		if err := binary.Write(bw, binary.LittleEndian, i); err != nil {
-			return err
-		}
-	}
-
-	for _, i := range t.level1 {
-		if err := binary.Write(bw, binary.LittleEndian, i); err != nil {
-			return err
-		}
-	}
-
-	return nil
 }
 
 type FlatTable struct {
