@@ -6,11 +6,11 @@ package bit
 
 import (
 	"bufio"
-	"bytes"
 	"os"
 	"sync"
 	"testing"
 
+	"github.com/bpowers/bit/internal/bytesutil"
 	"github.com/stretchr/testify/require"
 )
 
@@ -52,34 +52,6 @@ func loadBenchTable() {
 	}
 }
 
-func TestSplit2(t *testing.T) {
-	sep := byte(',')
-	for _, testcase := range []string{
-		"",
-		"a,b",
-		",a,b,",
-		"a,b,",
-	} {
-		input := []byte(testcase)
-		expected := bytes.SplitN(input, []byte{sep}, 2)
-		var actualL, actualR []byte
-		var ok bool
-		allocs := testing.AllocsPerRun(1, func() {
-			actualL, actualR, ok = split2(input, sep)
-		})
-		require.Zero(t, allocs)
-		require.True(t, len(expected) <= 2)
-		if len(expected) < 2 {
-			require.False(t, ok)
-		} else {
-			expectedL := expected[0]
-			expectedR := expected[1]
-			require.Equal(t, expectedL, actualL)
-			require.Equal(t, expectedR, actualR)
-		}
-	}
-}
-
 func openTestFile(path string) (*Table, map[string]string, error) {
 	f, err := os.Open(path)
 	if err != nil {
@@ -114,7 +86,7 @@ func openTestFile(path string) (*Table, map[string]string, error) {
 	s := bufio.NewScanner(bufio.NewReaderSize(f, 16*1024))
 	for s.Scan() {
 		line := s.Bytes()
-		k, v, ok := split2(line, ':')
+		k, v, ok := bytesutil.Cut(line, ':')
 		if !ok {
 			panic("input file unexpected shape")
 		}
