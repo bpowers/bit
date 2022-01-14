@@ -14,8 +14,10 @@ import (
 	"os"
 	"path"
 	"sort"
+	"syscall"
 
 	"github.com/dgryski/go-farm"
+	"golang.org/x/sys/unix"
 
 	"github.com/bpowers/bit/datafile"
 	"github.com/bpowers/bit/internal/bitset"
@@ -214,6 +216,10 @@ func NewTable(path string) (*Table, error) {
 	fileFormatVersion := binary.LittleEndian.Uint32(m[4:8])
 	if fileFormatVersion != 1 {
 		return nil, fmt.Errorf("this version of the bit library can only read v1 data files; found v%d", fileFormatVersion)
+	}
+
+	if err := unix.Madvise(m, syscall.MADV_RANDOM); err != nil {
+		return nil, fmt.Errorf("madvise: %s", err)
 	}
 
 	offsetLen := binary.LittleEndian.Uint32(m[8:12])

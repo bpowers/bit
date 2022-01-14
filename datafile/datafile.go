@@ -12,6 +12,9 @@ import (
 	"io"
 	"os"
 	"sync"
+	"syscall"
+
+	"golang.org/x/sys/unix"
 
 	"github.com/dgryski/go-farm"
 
@@ -143,6 +146,11 @@ func NewMMapReaderWithPath(path string) (*Reader, error) {
 
 	if m.Len() < fileHeaderSize {
 		return nil, fmt.Errorf("data file too short: %d < %d", m.Len(), fileHeaderSize)
+	}
+
+	data := m.Data()
+	if err := unix.Madvise(data, syscall.MADV_RANDOM); err != nil {
+		return nil, fmt.Errorf("madvise: %s", err)
 	}
 
 	fileMagic := binary.LittleEndian.Uint32(m.Data()[:4])
