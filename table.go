@@ -65,8 +65,16 @@ func (b *Builder) Put(k, v []byte) error {
 	return nil
 }
 
-// Finalize flushes the table to disk and builds an index to efficiently randomly access entries.
 func (b *Builder) Finalize() (*Table, error) {
+	return b.finalize(indexfile.FastHighMem)
+}
+
+func (b *Builder) FinalizeLowMem() (*Table, error) {
+	return b.finalize(indexfile.SlowLowMem)
+}
+
+// Finalize flushes the table to disk and builds an index to efficiently randomly access entries.
+func (b *Builder) finalize(indexBuildType indexfile.BuildType) (*Table, error) {
 	if err := b.dioWriter.Close(); err != nil {
 		return nil, fmt.Errorf("recordio.Close: %e", err)
 	}
@@ -94,7 +102,7 @@ func (b *Builder) Finalize() (*Table, error) {
 
 	it := r.Iter()
 	defer it.Close()
-	if err := indexfile.Build(f, it); err != nil {
+	if err := indexfile.Build(f, it, indexBuildType); err != nil {
 		_ = f.Close()
 		_ = os.Remove(f.Name())
 		return nil, fmt.Errorf("idx.Write: %e", err)

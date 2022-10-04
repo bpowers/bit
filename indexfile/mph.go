@@ -32,14 +32,37 @@ const (
 	fileHeaderSize   = 128
 )
 
+type BuildType int
+
+const (
+	FastHighMem BuildType = iota
+	SlowLowMem
+)
+
 var (
 	errorDuplicateKey = errors.New("duplicate keys aren't supported")
 )
 
-// Build builds a InMemoryTable from keys using the "Hash, displace, and compress"
+// Build builds a inMemoryTable from keys using the "Hash, displace, and compress"
 // algorithm described in http://cmph.sourceforge.net/papers/esa09.pdf.
-func Build(f *os.File, it datafile.Iter) error {
-	return buildOutOfCore(f, it)
+func Build(f *os.File, it datafile.Iter, buildType BuildType) error {
+	switch buildType {
+	case FastHighMem:
+		return buildInCore(f, it)
+	case SlowLowMem:
+		return buildOutOfCore(f, it)
+	default:
+		return errors.New("unknown buildType argument")
+	}
+}
+
+func buildInCore(f *os.File, it datafile.Iter) error {
+	t, err := newInMemoryTable(it)
+	if err != nil {
+		return err
+	}
+
+	return t.Write(f)
 }
 
 func buildOutOfCore(f *os.File, it datafile.Iter) error {
@@ -268,3 +291,126 @@ type bySize []ondisk.Bucket
 func (s bySize) Len() int           { return len(s) }
 func (s bySize) Less(i, j int) bool { return len(s[i].Values) > len(s[j].Values) }
 func (s bySize) Swap(i, j int)      { s[i], s[j] = s[j], s[i] }
+
+// inMemoryTable is an immutable hash table that provides constant-time lookups of key
+// indices using a minimal perfect hash.
+type inMemoryTable struct {
+	offsets    []int64
+	level0     []uint32 // power of 2 size
+	level0Mask uint32   // len(Level0) - 1
+	level1     []uint32 // power of 2 size >= len(keys)
+	level1Mask uint32   // len(Level1) - 1
+}
+
+// newInMemoryTable builds a inMemoryTable from keys using the "Hash, displace, and compress"
+// algorithm described in http://cmph.sourceforge.net/papers/esa09.pdf.
+func newInMemoryTable(it datafile.Iter) (*inMemoryTable, error) {
+	entryLen := it.Len()
+	var (
+		level0        = make([]uint32, nextPow2(entryLen/4))
+		level0Mask    = uint32(len(level0) - 1)
+		level1        = make([]uint32, nextPow2(entryLen))
+		level1Mask    = uint32(len(level1) - 1)
+		sparseBuckets = make([][]uint32, len(level0))
+	)
+
+	offsets := make([]int64, entryLen)
+
+	i := 0
+	for e := range it.Iter() {
+		n := uint32(farm.Hash64WithSeed(e.Key, 0)) & level0Mask
+		sparseBuckets[n] = append(sparseBuckets[n], uint32(i))
+		offsets[i] = e.Offset
+		i++
+	}
+	var buckets []ondisk.Bucket
+	for n, vals := range sparseBuckets {
+		if len(vals) > 0 {
+			buckets = append(buckets, ondisk.Bucket{N: int64(n), Values: vals})
+		}
+	}
+	sort.Sort(bySize(buckets))
+
+	occ := bitset.New(int64(len(level1)))
+	var tmpOcc []uint32
+	for _, bucket := range buckets {
+		seed := uint64(1)
+	trySeed:
+		tmpOcc = tmpOcc[:0]
+		for _, i := range bucket.Values {
+			key, _, err := it.ReadAt(offsets[i])
+			if err != nil {
+				return nil, err
+			}
+			n := uint32(farm.Hash64WithSeed(key, seed)) & level1Mask
+			if occ.IsSet(int64(n)) {
+				for _, n := range tmpOcc {
+					occ.Clear(int64(n))
+				}
+				seed++
+				goto trySeed
+			}
+			occ.Set(int64(n))
+			tmpOcc = append(tmpOcc, n)
+			level1[n] = i
+		}
+		level0[bucket.N] = uint32(seed)
+	}
+
+	return &inMemoryTable{
+		offsets:    offsets,
+		level0:     level0,
+		level0Mask: level0Mask,
+		level1:     level1,
+		level1Mask: level1Mask,
+	}, nil
+}
+
+// MaybeLookupString searches for s in t and returns its potential index.
+func (t *inMemoryTable) MaybeLookupString(s string) uint64 {
+	return t.MaybeLookup(unsafestring.ToBytes(s))
+}
+
+// MaybeLookup searches for b in t and returns its potential index.
+func (t *inMemoryTable) MaybeLookup(b []byte) uint64 {
+	i0 := uint32(farm.Hash64WithSeed(b, 0)) & t.level0Mask
+	seed := uint64(t.level0[i0])
+	i1 := uint32(farm.Hash64WithSeed(b, seed)) & t.level1Mask
+	n := t.level1[i1]
+	return uint64(t.offsets[int(n)])
+}
+
+// Write writes the table out to the given file
+func (t *inMemoryTable) Write(w io.Writer) error {
+	bw := bufio.NewWriterSize(w, 4*1024*1024)
+	defer func() {
+		_ = bw.Flush()
+	}()
+
+	if err := writeFileHeader(bw, int64(len(t.offsets)), int64(len(t.level0)), int64(len(t.level1))); err != nil {
+		return fmt.Errorf("writeFileHeader: %e", err)
+	}
+
+	// we should be 8-byte aligned at this point (file header is 128-bytes wide)
+
+	// write offsets first, while we're sure we're 8-byte aligned
+	for _, i := range t.offsets {
+		if err := binary.Write(bw, binary.LittleEndian, i); err != nil {
+			return err
+		}
+	}
+
+	for _, i := range t.level0 {
+		if err := binary.Write(bw, binary.LittleEndian, i); err != nil {
+			return err
+		}
+	}
+
+	for _, i := range t.level1 {
+		if err := binary.Write(bw, binary.LittleEndian, i); err != nil {
+			return err
+		}
+	}
+
+	return nil
+}
