@@ -30,6 +30,7 @@ import (
 const (
 	magicIndexHeader = uint32(0xC0FFEE01)
 	fileHeaderSize   = 128
+	maxIndexEntries  = (1 << 31) - 1
 )
 
 type BuildType int
@@ -46,6 +47,10 @@ var (
 // Build builds a inMemoryTable from keys using the "Hash, displace, and compress"
 // algorithm described in http://cmph.sourceforge.net/papers/esa09.pdf.
 func Build(f *os.File, it datafile.Iter, buildType BuildType) error {
+	if it.Len() > maxIndexEntries {
+		return fmt.Errorf("too many elements -- we only support %d items in a bit index (%d asked for)", maxIndexEntries, it.Len())
+	}
+
 	switch buildType {
 	case FastHighMem:
 		return buildInCore(f, it)
@@ -70,7 +75,13 @@ func buildOutOfCore(f *os.File, it datafile.Iter) error {
 		entryLen  = it.Len()
 		level0Len = nextPow2(entryLen / 4)
 		level1Len = nextPow2(entryLen)
+	)
 
+	if level1Len >= (1<<32)-1 {
+		return fmt.Errorf("level1Len too big %d (too many entries)", level1Len)
+	}
+
+	var (
 		level0Mask = uint32(level0Len - 1)
 		level1Mask = uint32(level1Len - 1)
 	)
@@ -305,16 +316,27 @@ type inMemoryTable struct {
 // newInMemoryTable builds a inMemoryTable from keys using the "Hash, displace, and compress"
 // algorithm described in http://cmph.sourceforge.net/papers/esa09.pdf.
 func newInMemoryTable(it datafile.Iter) (*inMemoryTable, error) {
-	entryLen := it.Len()
 	var (
-		level0        = make([]uint32, nextPow2(entryLen/4))
-		level0Mask    = uint32(len(level0) - 1)
-		level1        = make([]uint32, nextPow2(entryLen))
-		level1Mask    = uint32(len(level1) - 1)
-		sparseBuckets = make([][]uint32, len(level0))
+		entryLen  = it.Len()
+		level0Len = nextPow2(entryLen / 4)
+		level1Len = nextPow2(entryLen)
 	)
 
-	offsets := make([]int64, entryLen)
+	if level1Len >= (1<<32)-1 {
+		return nil, fmt.Errorf("level1Len too big %d (too many entries)", level1Len)
+	}
+
+	var (
+		level0Mask = uint32(level0Len - 1)
+		level1Mask = uint32(level1Len - 1)
+	)
+
+	var (
+		offsets       = make([]int64, entryLen)
+		level0        = make([]uint32, nextPow2(entryLen/4))
+		level1        = make([]uint32, nextPow2(entryLen))
+		sparseBuckets = make([][]uint32, len(level0))
+	)
 
 	i := 0
 	for e := range it.Iter() {
