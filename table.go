@@ -34,7 +34,7 @@ func NewBuilder(dataFilePath string) (*Builder, error) {
 	// we want to write to a new file and do an atomic rename when we're done on disk
 	dataFilePath, err := filepath.Abs(dataFilePath)
 	if err != nil {
-		return nil, fmt.Errorf("filepath.Abs: %e", err)
+		return nil, fmt.Errorf("filepath.Abs: %w", err)
 	}
 	dir := filepath.Dir(dataFilePath)
 	dataFile, err := os.CreateTemp(dir, "bit-builder.*.data")
@@ -43,7 +43,7 @@ func NewBuilder(dataFilePath string) (*Builder, error) {
 	}
 	w, err := datafile.NewWriter(dataFile)
 	if err != nil {
-		return nil, fmt.Errorf("datafile.NewWriter: %e", err)
+		return nil, fmt.Errorf("datafile.NewWriter: %w", err)
 	}
 	return &Builder{
 		resultPath: dataFilePath,
@@ -76,25 +76,33 @@ func (b *Builder) FinalizeLowMem() (*Table, error) {
 // Finalize flushes the table to disk and builds an index to efficiently randomly access entries.
 func (b *Builder) finalize(indexBuildType indexfile.BuildType) (*Table, error) {
 	if err := b.dioWriter.Close(); err != nil {
-		return nil, fmt.Errorf("recordio.Close: %e", err)
+		return nil, fmt.Errorf("recordio.Close: %w", err)
 	}
 	// make the file read-only
 	if err := os.Chmod(b.dataFile.Name(), 0444); err != nil {
-		return nil, fmt.Errorf("os.Chmod(0444): %e", err)
+		return nil, fmt.Errorf("os.Chmod(0444): %w", err)
 	}
 	if err := os.Rename(b.dataFile.Name(), b.resultPath); err != nil {
-		return nil, fmt.Errorf("os.Rename: %e", err)
+		return nil, fmt.Errorf("os.Rename: %w", err)
 	}
 	// make the file read-only
 	if err := os.Chmod(b.resultPath, 0444); err != nil {
-		return nil, fmt.Errorf("os.Chmod(0444): %e", err)
+		return nil, fmt.Errorf("os.Chmod(0444): %w", err)
 	}
 	b.dataFile = nil
 	dataPath := b.resultPath
 
+	if err := BuildIndexFor(dataPath, indexBuildType); err != nil {
+		return nil, fmt.Errorf("BuildIndexFor: %w\n", err)
+	}
+
+	return New(dataPath)
+}
+
+func BuildIndexFor(dataPath string, indexBuildType indexfile.BuildType) error {
 	r, err := datafile.NewMMapReaderWithPath(dataPath)
 	if err != nil {
-		return nil, fmt.Errorf("datafile.NewMMapReaderWithPath(%s): %e", dataPath, err)
+		return fmt.Errorf("datafile.NewMMapReaderWithPath(%s): %w", dataPath, err)
 	}
 
 	finalIndexPath := dataPath + ".index"
@@ -105,27 +113,27 @@ func (b *Builder) finalize(indexBuildType indexfile.BuildType) (*Table, error) {
 	if err := indexfile.Build(f, it, indexBuildType); err != nil {
 		_ = f.Close()
 		_ = os.Remove(f.Name())
-		return nil, fmt.Errorf("idx.Write: %e", err)
+		return fmt.Errorf("idx.Write: %e", err)
 	}
 
 	if err = f.Sync(); err != nil {
-		return nil, err
+		return err
 	}
 	if err = f.Close(); err != nil {
-		return nil, err
+		return err
 	}
 
 	if err = os.Chmod(f.Name(), 0444); err != nil {
-		return nil, fmt.Errorf("os.Chmod(0444): %e", err)
+		return fmt.Errorf("os.Chmod(0444): %e", err)
 	}
 	if err = os.Rename(f.Name(), finalIndexPath); err != nil {
-		return nil, fmt.Errorf("os.Rename: %e", err)
+		return fmt.Errorf("os.Rename: %e", err)
 	}
 	if err = os.Chmod(finalIndexPath, 0444); err != nil {
-		return nil, fmt.Errorf("os.Chmod(0444): %e", err)
+		return fmt.Errorf("os.Chmod(0444): %e", err)
 	}
 
-	return New(dataPath)
+	return nil
 }
 
 // Table represents an on-disk big immutable table.  The contents of the table are `mmap(2)`'d
