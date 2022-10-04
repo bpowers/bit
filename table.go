@@ -92,14 +92,14 @@ func (b *Builder) finalize(indexBuildType indexfile.BuildType) (*Table, error) {
 	b.dataFile = nil
 	dataPath := b.resultPath
 
-	if err := buildIndexFor(dataPath, indexBuildType); err != nil {
-		return nil, fmt.Errorf("buildIndexFor: %w\n", err)
+	if err := BuildIndexFor(dataPath, indexBuildType); err != nil {
+		return nil, fmt.Errorf("BuildIndexFor: %w\n", err)
 	}
 
 	return New(dataPath)
 }
 
-func buildIndexFor(dataPath string, indexBuildType indexfile.BuildType) error {
+func BuildIndexFor(dataPath string, indexBuildType indexfile.BuildType) error {
 	r, err := datafile.NewMMapReaderWithPath(dataPath)
 	if err != nil {
 		return fmt.Errorf("datafile.NewMMapReaderWithPath(%s): %w", dataPath, err)
