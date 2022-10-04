@@ -258,3 +258,9 @@ func (t *Table) MaybeLookup(b []byte) uint64 {
 	n := binary.LittleEndian.Uint32(t.level1[i1*4 : i1*4+4])
 	return binary.LittleEndian.Uint64(t.offsets[n*8 : n*8+8])
 }
+
+type bySize []ondisk.Bucket
+
+func (s bySize) Len() int           { return len(s) }
+func (s bySize) Less(i, j int) bool { return len(s[i].Values) > len(s[j].Values) }
+func (s bySize) Swap(i, j int)      { s[i], s[j] = s[j], s[i] }

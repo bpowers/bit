@@ -17,6 +17,8 @@ import (
 	"sync"
 	"testing"
 
+	"github.com/bpowers/bit/internal/ondisk"
+
 	"github.com/stretchr/testify/require"
 
 	"github.com/dgryski/go-farm"
@@ -284,7 +286,7 @@ func BuildInMemory(it datafile.Iter) *InMemoryTable {
 		level0Mask    = uint32(len(level0) - 1)
 		level1        = make([]uint32, nextPow2(entryLen))
 		level1Mask    = uint32(len(level1) - 1)
-		sparseBuckets = make([][]int, len(level0))
+		sparseBuckets = make([][]uint32, len(level0))
 	)
 
 	offsets := make([]int64, entryLen)
@@ -292,14 +294,14 @@ func BuildInMemory(it datafile.Iter) *InMemoryTable {
 	i := 0
 	for e := range it.Iter() {
 		n := uint32(farm.Hash64WithSeed(e.Key, 0)) & level0Mask
-		sparseBuckets[n] = append(sparseBuckets[n], i)
+		sparseBuckets[n] = append(sparseBuckets[n], uint32(i))
 		offsets[i] = e.Offset
 		i++
 	}
-	var buckets []indexBucket
+	var buckets []ondisk.Bucket
 	for n, vals := range sparseBuckets {
 		if len(vals) > 0 {
-			buckets = append(buckets, indexBucket{n, vals})
+			buckets = append(buckets, ondisk.Bucket{N: int64(n), Values: vals})
 		}
 	}
 	sort.Sort(bySize(buckets))
@@ -310,7 +312,7 @@ func BuildInMemory(it datafile.Iter) *InMemoryTable {
 		seed := uint64(1)
 	trySeed:
 		tmpOcc = tmpOcc[:0]
-		for _, i := range bucket.vals {
+		for _, i := range bucket.Values {
 			key, _, err := it.ReadAt(offsets[i])
 			if err != nil {
 				// TODO: fixme
@@ -328,7 +330,7 @@ func BuildInMemory(it datafile.Iter) *InMemoryTable {
 			tmpOcc = append(tmpOcc, n)
 			level1[n] = uint32(i)
 		}
-		level0[bucket.n] = uint32(seed)
+		level0[bucket.N] = uint32(seed)
 	}
 
 	return &InMemoryTable{
@@ -388,14 +390,3 @@ func (t *InMemoryTable) Write(w io.Writer) error {
 
 	return nil
 }
-
-type indexBucket struct {
-	n    int
-	vals []int
-}
-
-type bySize []indexBucket
-
-func (s bySize) Len() int           { return len(s) }
-func (s bySize) Less(i, j int) bool { return len(s[i].vals) > len(s[j].vals) }
-func (s bySize) Swap(i, j int)      { s[i], s[j] = s[j], s[i] }
