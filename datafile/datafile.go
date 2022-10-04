@@ -257,7 +257,7 @@ func (i *iter) Iter() <-chan IterItem {
 	return ch
 }
 
-func (i *iter) producer(ctx context.Context, ch chan<- IterItem) {
+func (i *iter) producer(_ context.Context, ch chan<- IterItem) {
 	defer close(ch)
 
 	off := int64(fileHeaderSize)
@@ -271,11 +271,7 @@ func (i *iter) producer(ctx context.Context, ch chan<- IterItem) {
 			Value:  v,
 			Offset: off,
 		}
-		select {
-		case ch <- item:
-		case <-ctx.Done():
-			break
-		}
+		ch <- item
 		off += recordHeaderSize + int64(len(k)) + int64(len(v))
 	}
 }
