@@ -50,7 +50,9 @@ func (i *testIter) Next() (datafile.IterItem, bool) {
 
 // Close cleans up the iterator, closing the iteration channel and freeing resources.
 func (i *testIter) Close() {
-	i.cancel()
+	if i.cancel != nil {
+		i.cancel()
+	}
 }
 
 func (i *testIter) Iter() <-chan datafile.IterItem {

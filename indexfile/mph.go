@@ -344,7 +344,7 @@ func newInMemoryTable(it datafile.Iter) (*inMemoryTable, error) {
 
 	{
 		i := 0
-		for e := range it.Iter() {
+		for e, ok := it.Next(); ok; e, ok = it.Next() {
 			n := uint32(farm.Hash64WithSeed(e.Key, 0)) & level0Mask
 			sparseBuckets[n] = append(sparseBuckets[n], uint32(i))
 			offsets[i] = e.Offset
