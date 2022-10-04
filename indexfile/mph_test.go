@@ -328,7 +328,7 @@ func BuildInMemory(it datafile.Iter) *InMemoryTable {
 			}
 			occ.Set(int64(n))
 			tmpOcc = append(tmpOcc, n)
-			level1[n] = uint32(i)
+			level1[n] = i
 		}
 		level0[bucket.N] = uint32(seed)
 	}

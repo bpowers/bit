@@ -39,6 +39,10 @@ var (
 // Build builds a InMemoryTable from keys using the "Hash, displace, and compress"
 // algorithm described in http://cmph.sourceforge.net/papers/esa09.pdf.
 func Build(f *os.File, it datafile.Iter) error {
+	return buildOutOfCore(f, it)
+}
+
+func buildOutOfCore(f *os.File, it datafile.Iter) error {
 	var (
 		entryLen  = it.Len()
 		level0Len = nextPow2(entryLen / 4)
