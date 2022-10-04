@@ -333,8 +333,8 @@ func newInMemoryTable(it datafile.Iter) (*inMemoryTable, error) {
 
 	var (
 		offsets       = make([]int64, entryLen)
-		level0        = make([]uint32, nextPow2(entryLen/4))
-		level1        = make([]uint32, nextPow2(entryLen))
+		level0        = make([]uint32, level0Len)
+		level1        = make([]uint32, level1Len)
 		sparseBuckets = make([][]uint32, len(level0))
 	)
 
