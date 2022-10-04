@@ -28,6 +28,24 @@ type testIter struct {
 	items  []testEntry
 	cancel func()
 	ch     chan datafile.IterItem
+	off    int64
+}
+
+func (i *testIter) Next() (datafile.IterItem, bool) {
+	if i.off >= int64(len(i.items)) {
+		return datafile.IterItem{}, false
+	}
+
+	item := i.items[i.off]
+	iitem := datafile.IterItem{
+		Key:    []byte(item.Key),
+		Value:  []byte(item.Value),
+		Offset: i.off,
+	}
+
+	i.off++
+
+	return iitem, true
 }
 
 // Close cleans up the iterator, closing the iteration channel and freeing resources.

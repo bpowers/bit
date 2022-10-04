@@ -219,6 +219,7 @@ type Iter interface {
 	Iter() <-chan IterItem
 	Len() int64
 	ReadAt(off int64) (key []byte, value []byte, err error)
+	Next() (IterItem, bool)
 }
 
 type iter struct {
@@ -228,6 +229,7 @@ type iter struct {
 		cancel func()
 		ch     chan IterItem
 	}
+	off int64
 }
 
 // Close cleans up the iterator, closing the iteration channel and freeing resources.
@@ -255,6 +257,27 @@ func (i *iter) Iter() <-chan IterItem {
 	})
 	go i.producer(ctx, ch)
 	return ch
+}
+
+func (i *iter) Next() (IterItem, bool) {
+	if i.off == 0 {
+		i.off = int64(fileHeaderSize)
+	}
+
+	k, v, err := i.r.ReadAt(i.off)
+	if err != nil {
+		return IterItem{}, false
+	}
+
+	item := IterItem{
+		Key:    k,
+		Value:  v,
+		Offset: i.off,
+	}
+
+	i.off += recordHeaderSize + int64(len(k)) + int64(len(v))
+
+	return item, true
 }
 
 func (i *iter) producer(_ context.Context, ch chan<- IterItem) {

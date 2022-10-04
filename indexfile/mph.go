@@ -121,7 +121,7 @@ func buildOutOfCore(f *os.File, it datafile.Iter) error {
 
 	valueBuf := make([]byte, 8)
 	i := 0
-	for e := range it.Iter() {
+	for e, ok := it.Next(); ok; e, ok = it.Next() {
 		n := uint32(farm.Hash64WithSeed(e.Key, 0)) & level0Mask
 		if err := buckets.AddToBucket(int64(n), int32(i)); err != nil {
 			return err
