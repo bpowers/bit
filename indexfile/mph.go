@@ -10,6 +10,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"log"
 	"math/bits"
 	"os"
 	"path"
@@ -31,6 +32,7 @@ const (
 	magicIndexHeader = uint32(0xC0FFEE01)
 	fileHeaderSize   = 128
 	maxIndexEntries  = (1 << 31) - 1
+	maxUint32        = ^uint32(0)
 )
 
 type BuildType int
@@ -335,29 +337,46 @@ func newInMemoryTable(it datafile.Iter) (*inMemoryTable, error) {
 		offsets       = make([]int64, entryLen)
 		level0        = make([]uint32, level0Len)
 		level1        = make([]uint32, level1Len)
-		sparseBuckets = make([][]uint32, len(level0))
+		sparseBuckets = make([][]uint32, level0Len)
 	)
 
-	i := 0
-	for e := range it.Iter() {
-		n := uint32(farm.Hash64WithSeed(e.Key, 0)) & level0Mask
-		sparseBuckets[n] = append(sparseBuckets[n], uint32(i))
-		offsets[i] = e.Offset
-		i++
+	log.Printf("building sparse buckets\n")
+
+	{
+		i := 0
+		for e := range it.Iter() {
+			n := uint32(farm.Hash64WithSeed(e.Key, 0)) & level0Mask
+			sparseBuckets[n] = append(sparseBuckets[n], uint32(i))
+			offsets[i] = e.Offset
+			i++
+		}
 	}
+
+	log.Printf("collating sparse buckets\n")
+
 	var buckets []ondisk.Bucket
 	for n, vals := range sparseBuckets {
 		if len(vals) > 0 {
 			buckets = append(buckets, ondisk.Bucket{N: int64(n), Values: vals})
 		}
 	}
-	sort.Sort(bySize(buckets))
 
+	log.Printf("sorting sparse buckets\n")
+	sort.Sort(bySize(buckets))
+	log.Printf("done sorting sparse buckets\n")
+
+	log.Printf("iterating over %d buckets\n", len(buckets))
 	occ := bitset.New(int64(len(level1)))
 	var tmpOcc []uint32
-	for _, bucket := range buckets {
+	for j, bucket := range buckets {
+		if j%1000000 == 0 {
+			log.Printf("at bucket %d\n", j)
+		}
 		seed := uint64(1)
 	trySeed:
+		if seed >= uint64(maxUint32) {
+			return nil, errors.New("couldn't find 32-bit seed")
+		}
 		tmpOcc = tmpOcc[:0]
 		for _, i := range bucket.Values {
 			key, _, err := it.ReadAt(offsets[i])
@@ -416,18 +435,21 @@ func (t *inMemoryTable) Write(w io.Writer) error {
 	// we should be 8-byte aligned at this point (file header is 128-bytes wide)
 
 	// write offsets first, while we're sure we're 8-byte aligned
+	log.Printf("writing offsets\n")
 	for _, i := range t.offsets {
 		if err := binary.Write(bw, binary.LittleEndian, i); err != nil {
 			return err
 		}
 	}
 
+	log.Printf("writing level 0\n")
 	for _, i := range t.level0 {
 		if err := binary.Write(bw, binary.LittleEndian, i); err != nil {
 			return err
 		}
 	}
 
+	log.Printf("writing level 1\n")
 	for _, i := range t.level1 {
 		if err := binary.Write(bw, binary.LittleEndian, i); err != nil {
 			return err
