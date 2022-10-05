@@ -56,10 +56,10 @@ func (s bySize) Swap(i, j int)      { s[i], s[j] = s[j], s[i] }
 // inMemoryBuilder is an immutable hash table that provides constant-time lookups of key
 // indices using a minimal perfect hash.
 type inMemoryBuilder struct {
-	level0     []uint32 // power of 2 size
-	level0Mask uint64   // len(Level0) - 1
-	level1     []uint64 // power of 2 size >= len(keys)
-	level1Mask uint64   // len(Level1) - 1
+	level0     []uint32                // power of 2 size
+	level0Mask uint64                  // len(Level0) - 1
+	level1     []datafile.PackedOffset // power of 2 size >= len(keys)
+	level1Mask uint64                  // len(Level1) - 1
 }
 
 // newInMemoryBuilder builds a inMemoryBuilder from keys using the "Hash, displace, and compress"
@@ -81,9 +81,9 @@ func newInMemoryBuilder(it datafile.Iter) (*inMemoryBuilder, error) {
 	)
 
 	var (
-		offsets       = make([]uint64, entryLen)
+		offsets       = make([]datafile.PackedOffset, entryLen)
 		level0        = make([]uint32, level0Len)
-		level1        = make([]uint64, level1Len)
+		level1        = make([]datafile.PackedOffset, level1Len)
 		sparseBuckets = make([][]uint32, level0Len)
 	)
 
@@ -94,7 +94,7 @@ func newInMemoryBuilder(it datafile.Iter) (*inMemoryBuilder, error) {
 		for e, ok := it.Next(); ok; e, ok = it.Next() {
 			n := farm.Hash64WithSeed(e.Key, 0) & level0Mask
 			sparseBuckets[n] = append(sparseBuckets[n], uint32(i))
-			offsets[i] = uint64(e.Offset)
+			offsets[i] = e.PackedOffset()
 			i++
 		}
 	}
@@ -126,7 +126,7 @@ func newInMemoryBuilder(it datafile.Iter) (*inMemoryBuilder, error) {
 		}
 		tmpOcc = tmpOcc[:0]
 		for _, i := range bucket.Values {
-			key, _, err := it.ReadAt(int64(offsets[i]))
+			key, _, err := it.ReadAt(offsets[i])
 			if err != nil {
 				return nil, err
 			}
@@ -155,12 +155,12 @@ func newInMemoryBuilder(it datafile.Iter) (*inMemoryBuilder, error) {
 }
 
 // MaybeLookupString searches for s in t and returns its potential index.
-func (t *inMemoryBuilder) MaybeLookupString(s string) uint64 {
+func (t *inMemoryBuilder) MaybeLookupString(s string) datafile.PackedOffset {
 	return t.MaybeLookup(unsafestring.ToBytes(s))
 }
 
 // MaybeLookup searches for b in t and returns its potential index.
-func (t *inMemoryBuilder) MaybeLookup(b []byte) uint64 {
+func (t *inMemoryBuilder) MaybeLookup(b []byte) datafile.PackedOffset {
 	i0 := farm.Hash64WithSeed(b, 0) & t.level0Mask
 	seed := uint64(t.level0[i0])
 	i1 := farm.Hash64WithSeed(b, seed) & t.level1Mask

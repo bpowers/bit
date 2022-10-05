@@ -164,7 +164,7 @@ func New(dataPath string) (*Table, error) {
 // The value is a []byte, but MUST NOT be written to.
 func (t *Table) GetString(key string) ([]byte, bool) {
 	off := t.idx.MaybeLookupString(key)
-	expectedKey, value, err := t.data.ReadAt(int64(off))
+	expectedKey, value, err := t.data.ReadAt(off)
 	if err != nil {
 		if err != datafile.InvalidOffset {
 			// TODO: remove this before deploying to prod probably
@@ -184,7 +184,7 @@ func (t *Table) GetString(key string) ([]byte, bool) {
 // The value is a []byte, but MUST NOT be written to.
 func (t *Table) Get(key []byte) ([]byte, bool) {
 	off := t.idx.MaybeLookup(key)
-	expectedKey, value, err := t.data.ReadAt(int64(off))
+	expectedKey, value, err := t.data.ReadAt(off)
 	if err != nil {
 		if err != datafile.InvalidOffset {
 			// TODO: remove this before deploying to prod probably

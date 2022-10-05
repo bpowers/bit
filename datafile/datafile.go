@@ -72,9 +72,9 @@ func NewWriter(f *os.File) (*Writer, error) {
 // PackedOffset packs datafile offset + record length into a 64-bit value
 type PackedOffset uint64
 
-func (po PackedOffset) Unpack() (off, recordLen uint64) {
+func (po PackedOffset) Unpack() (off int64, recordLen uint64) {
 	packed := uint64(po)
-	off = packed >> 16
+	off = int64(packed >> 16)
 	keyLen := (packed >> 8) & 0xff
 	valueLen := (packed) & 0xff
 
@@ -82,7 +82,7 @@ func (po PackedOffset) Unpack() (off, recordLen uint64) {
 }
 
 func NewPackedOffset(off uint64, keyLen, valueLen uint8) PackedOffset {
-	return PackedOffset((off << 48) | uint64(keyLen)<<8 | uint64(valueLen))
+	return PackedOffset((off << 16) | uint64(keyLen)<<8 | uint64(valueLen))
 
 }
 
@@ -217,7 +217,8 @@ func (r *Reader) Len() int64 {
 	return r.entryCount
 }
 
-func (r *Reader) ReadAt(off int64) (key, value []byte, err error) {
+func (r *Reader) ReadAt(poff PackedOffset) (key, value []byte, err error) {
+	off, _ := poff.Unpack()
 	// an offset of 0 is never valid -- offsets are absolute from the
 	// start of the datafile, and datafiles _always_ have a 128-byte
 	// header.  This doesn't indicate corruption -- if someone looks
@@ -260,12 +261,19 @@ type IterItem struct {
 	Offset int64
 }
 
+func (ii IterItem) PackedOffset() PackedOffset {
+	if ii.Offset < 0 || len(ii.Key) > maximumKeyLength || len(ii.Value) > maximumValueLength {
+		panic("PackedOffset invariants broken!")
+	}
+	return NewPackedOffset(uint64(ii.Offset), uint8(len(ii.Key)), uint8(len(ii.Value)))
+}
+
 // Iter iterates over the contents in a logfile.  Make sure to `defer it.Close()`.
 type Iter interface {
 	Close()
 	Iter() <-chan IterItem
 	Len() int64
-	ReadAt(off int64) (key []byte, value []byte, err error)
+	ReadAt(off PackedOffset) (key []byte, value []byte, err error)
 	Next() (IterItem, bool)
 }
 
@@ -311,7 +319,7 @@ func (i *iter) Next() (IterItem, bool) {
 		i.off = int64(fileHeaderSize)
 	}
 
-	k, v, err := i.r.ReadAt(i.off)
+	k, v, err := i.r.ReadAt(NewPackedOffset(uint64(i.off), 0, 0))
 	if err != nil {
 		return IterItem{}, false
 	}
@@ -332,7 +340,7 @@ func (i *iter) producer(_ context.Context, ch chan<- IterItem) {
 
 	off := int64(fileHeaderSize)
 	for {
-		k, v, err := i.r.ReadAt(off)
+		k, v, err := i.r.ReadAt(NewPackedOffset(uint64(off), 0, 0))
 		if err != nil {
 			return
 		}
@@ -350,6 +358,6 @@ func (i *iter) Len() int64 {
 	return i.r.Len()
 }
 
-func (i *iter) ReadAt(off int64) (key []byte, value []byte, err error) {
+func (i *iter) ReadAt(off PackedOffset) (key []byte, value []byte, err error) {
 	return i.r.ReadAt(off)
 }

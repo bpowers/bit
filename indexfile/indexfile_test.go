@@ -86,7 +86,8 @@ func (i *testIter) Len() int64 {
 	return int64(len(i.items))
 }
 
-func (i *testIter) ReadAt(off int64) (key []byte, value []byte, err error) {
+func (i *testIter) ReadAt(poff datafile.PackedOffset) (key []byte, value []byte, err error) {
+	off, _ := poff.Unpack()
 	if off >= int64(len(i.items)) {
 		return nil, nil, errors.New("off too big")
 	}
@@ -144,7 +145,8 @@ func testTable(t *testing.T, keys []string, extra []string) {
 	}
 	for i, key := range keys {
 		n := table.MaybeLookupString(key)
-		if int(n) != i {
+		off, _ := n.Unpack()
+		if off != int64(i) {
 			t.Errorf("Lookup(%s): got n=%d; want %d", key, n, i)
 		}
 	}
@@ -187,8 +189,9 @@ func BenchmarkTable(b *testing.B) {
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
 		j := i % len(words)
-		n := benchTable.MaybeLookupString(string(words[j].Key))
-		if n != uint64(j) {
+		n := benchTable.MaybeLookupString(words[j].Key)
+		off, _ := n.Unpack()
+		if off != int64(j) {
 			b.Fatal("bad result index")
 		}
 	}
@@ -202,8 +205,9 @@ func BenchmarkFlatTable(b *testing.B) {
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
 		j := i % len(words)
-		n := benchFlatTable.MaybeLookupString(string(words[j].Key))
-		if n != uint64(j) {
+		n := benchFlatTable.MaybeLookupString(words[j].Key)
+		off, _ := n.Unpack()
+		if off != int64(j) {
 			b.Fatal("bad result index")
 		}
 	}

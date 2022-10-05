@@ -15,6 +15,7 @@ import (
 	"github.com/dgryski/go-farm"
 	"golang.org/x/sys/unix"
 
+	"github.com/bpowers/bit/datafile"
 	"github.com/bpowers/bit/internal/exp/mmap"
 	"github.com/bpowers/bit/internal/unsafestring"
 )
@@ -114,12 +115,12 @@ func NewTable(path string) (*Table, error) {
 }
 
 // MaybeLookupString searches for b in t and returns its potential index.
-func (t *Table) MaybeLookupString(s string) uint64 {
+func (t *Table) MaybeLookupString(s string) datafile.PackedOffset {
 	return t.MaybeLookup(unsafestring.ToBytes(s))
 }
 
 // MaybeLookup searches for b in t and returns its potential index.
-func (t *Table) MaybeLookup(b []byte) uint64 {
+func (t *Table) MaybeLookup(b []byte) datafile.PackedOffset {
 	// first we hash the key with a fixed seed, giving us the offset
 	// of a seed that perfectly hashes into our second-level table
 	seed := t.seeds.Get(farm.Hash64WithSeed(b, 0) & t.seedsMask)
@@ -127,5 +128,7 @@ func (t *Table) MaybeLookup(b []byte) uint64 {
 	// us the offset into our array of 'values' (which in this case
 	// are 64-bit indexes into the datafile, where the variable-sized
 	// value actually lives).
-	return t.offsets.Get(farm.Hash64WithSeed(b, uint64(seed)) & t.offsetsMask)
+	off := t.offsets.Get(farm.Hash64WithSeed(b, uint64(seed)) & t.offsetsMask)
+
+	return datafile.PackedOffset(off)
 }
