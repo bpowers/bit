@@ -29,7 +29,6 @@ type BuildType int
 
 const (
 	FastHighMem BuildType = iota
-	SlowLowMem
 )
 
 var (
@@ -44,7 +43,6 @@ func nextPow2(n int64) int64 {
 // Table is an index into a datafile, backed by an mmap'd file.
 type Table struct {
 	mm         *mmap.ReaderAt
-	offsets    []byte
 	level0     []byte
 	level0Mask uint64
 	level1     []byte
@@ -65,7 +63,7 @@ func NewTable(path string) (*Table, error) {
 	}
 
 	fileFormatVersion := binary.LittleEndian.Uint32(m[4:8])
-	if fileFormatVersion != 1 {
+	if fileFormatVersion != 2 {
 		return nil, fmt.Errorf("this version of the bit library can only read v1 data files; found v%d", fileFormatVersion)
 	}
 
@@ -73,22 +71,19 @@ func NewTable(path string) (*Table, error) {
 		return nil, fmt.Errorf("madvise: %s", err)
 	}
 
-	offsetLen := uint64(binary.LittleEndian.Uint32(m[8:12]))
 	level0Len := uint64(binary.LittleEndian.Uint32(m[12:16]))
 	level1Len := uint64(binary.LittleEndian.Uint32(m[16:20]))
 
 	rest := m[fileHeaderSize:]
-	offsets := rest[:offsetLen*8]
-	level0 := rest[offsetLen*8 : offsetLen*8+level0Len*4]
-	level1 := rest[offsetLen*8+level0Len*4:]
+	level1 := rest[:level1Len*8]
+	level0 := rest[level1Len*8 : level1Len*8+level0Len*4]
 
-	if uint64(len(level1)) != level1Len*4 {
+	if uint64(len(level1)) != level1Len*8 {
 		return nil, fmt.Errorf("bad len for level1: %d (expected %d)", len(level1), level1Len)
 	}
 
 	return &Table{
 		mm:         mm,
-		offsets:    offsets,
 		level0:     level0,
 		level0Mask: level0Len - 1,
 		level1:     level1,
@@ -106,6 +101,5 @@ func (t *Table) MaybeLookup(b []byte) uint64 {
 	i0 := farm.Hash64WithSeed(b, 0) & t.level0Mask
 	seed := uint64(binary.LittleEndian.Uint32(t.level0[i0*4 : i0*4+4]))
 	i1 := farm.Hash64WithSeed(b, seed) & t.level1Mask
-	n := binary.LittleEndian.Uint32(t.level1[i1*4 : i1*4+4])
-	return binary.LittleEndian.Uint64(t.offsets[n*8 : n*8+8])
+	return binary.LittleEndian.Uint64(t.level1[i1*8 : i1*8+8])
 }

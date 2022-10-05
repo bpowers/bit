@@ -165,20 +165,6 @@ func tmpTestfile() *os.File {
 	return f
 }
 
-func BenchmarkFileBasedBuild(b *testing.B) {
-	wordsOnce.Do(loadBenchTable)
-	if len(words) == 0 {
-		b.Skip("unable to load dictionary file")
-	}
-	f := tmpTestfile()
-	defer f.Close()
-	for i := 0; i < b.N; i++ {
-		if err := Build(f, &testIter{items: words}, SlowLowMem); err != nil {
-			panic(err)
-		}
-	}
-}
-
 func BenchmarkMemoryBasedBuild(b *testing.B) {
 	wordsOnce.Do(loadBenchTable)
 	if len(words) == 0 {

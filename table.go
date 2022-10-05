@@ -69,10 +69,6 @@ func (b *Builder) Finalize() (*Table, error) {
 	return b.finalize(indexfile.FastHighMem)
 }
 
-func (b *Builder) FinalizeLowMem() (*Table, error) {
-	return b.finalize(indexfile.SlowLowMem)
-}
-
 // Finalize flushes the table to disk and builds an index to efficiently randomly access entries.
 func (b *Builder) finalize(indexBuildType indexfile.BuildType) (*Table, error) {
 	if err := b.dioWriter.Close(); err != nil {

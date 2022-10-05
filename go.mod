@@ -5,7 +5,7 @@ go 1.18
 require (
 	github.com/dgryski/go-farm v0.0.0-20200201041132-a6ae2369ad13
 	github.com/stretchr/testify v1.7.0
-	golang.org/x/sys v0.0.0-20220114195835-da31bd327af9
+	golang.org/x/sys v0.0.0-20220928140112-f11e5e49a4ec
 )
 
 require (
