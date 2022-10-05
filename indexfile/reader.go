@@ -8,6 +8,7 @@ import (
 	"encoding/binary"
 	"errors"
 	"fmt"
+	"log"
 	"math/bits"
 	"syscall"
 
@@ -40,13 +41,27 @@ func nextPow2(n int64) int64 {
 	return 1 << (64 - bits.LeadingZeros64(uint64(n)))
 }
 
+// uint64Slice is a read-only view into a byte array as if it was []uint64
+type uint64Slice []byte
+
+// uint32Slice is a read-only view into a byte array as if it was []uint32
+type uint32Slice []byte
+
+func (s uint32Slice) Get(off uint64) uint32 {
+	return binary.LittleEndian.Uint32(s[off*4 : off*4+4])
+}
+
+func (s uint64Slice) Get(off uint64) uint64 {
+	return binary.LittleEndian.Uint64(s[off*8 : off*8+8])
+}
+
 // Table is an index into a datafile, backed by an mmap'd file.
 type Table struct {
-	mm         *mmap.ReaderAt
-	level0     []byte
-	level0Mask uint64
-	level1     []byte
-	level1Mask uint64
+	mm          *mmap.ReaderAt
+	seeds       uint32Slice
+	seedsMask   uint64
+	offsets     uint64Slice
+	offsetsMask uint64
 }
 
 // NewTable returns a new `*indexfile.Table` based on the on-disk table at `path`.
@@ -71,6 +86,13 @@ func NewTable(path string) (*Table, error) {
 		return nil, fmt.Errorf("madvise: %s", err)
 	}
 
+	log.Printf("mlocking the index into memory\n")
+	if err := unix.Mlock(m); err != nil {
+		log.Printf("failed to mlock the index, continuing anyway: %s\n", err)
+	} else {
+		log.Printf("finished mlocking the index into memory\n")
+	}
+
 	level0Len := uint64(binary.LittleEndian.Uint32(m[12:16]))
 	level1Len := uint64(binary.LittleEndian.Uint32(m[16:20]))
 
@@ -79,15 +101,15 @@ func NewTable(path string) (*Table, error) {
 	level0 := rest[level1Len*8 : level1Len*8+level0Len*4]
 
 	if uint64(len(level1)) != level1Len*8 {
-		return nil, fmt.Errorf("bad len for level1: %d (expected %d)", len(level1), level1Len)
+		return nil, fmt.Errorf("bad len for offsets: %d (expected %d)", len(level1), level1Len)
 	}
 
 	return &Table{
-		mm:         mm,
-		level0:     level0,
-		level0Mask: level0Len - 1,
-		level1:     level1,
-		level1Mask: level1Len - 1,
+		mm:          mm,
+		seeds:       level0,
+		seedsMask:   level0Len - 1,
+		offsets:     level1,
+		offsetsMask: level1Len - 1,
 	}, nil
 }
 
@@ -98,8 +120,12 @@ func (t *Table) MaybeLookupString(s string) uint64 {
 
 // MaybeLookup searches for b in t and returns its potential index.
 func (t *Table) MaybeLookup(b []byte) uint64 {
-	i0 := farm.Hash64WithSeed(b, 0) & t.level0Mask
-	seed := uint64(binary.LittleEndian.Uint32(t.level0[i0*4 : i0*4+4]))
-	i1 := farm.Hash64WithSeed(b, seed) & t.level1Mask
-	return binary.LittleEndian.Uint64(t.level1[i1*8 : i1*8+8])
+	// first we hash the key with a fixed seed, giving us the offset
+	// of a seed that perfectly hashes into our second-level table
+	seed := t.seeds.Get(farm.Hash64WithSeed(b, 0) & t.seedsMask)
+	// next, we use that more-specific seed to re-hash the key, giving
+	// us the offset into our array of 'values' (which in this case
+	// are 64-bit indexes into the datafile, where the variable-sized
+	// value actually lives).
+	return t.offsets.Get(farm.Hash64WithSeed(b, uint64(seed)) & t.offsetsMask)
 }

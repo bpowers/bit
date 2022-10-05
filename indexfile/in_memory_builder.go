@@ -197,7 +197,7 @@ func (t *inMemoryBuilder) Write(w io.Writer) error {
 
 	// we should be 8-byte aligned at this point (file header is 128-bytes wide)
 
-	// write level1 first, which has stricter alignment requirements
+	// write offsets first, which has stricter alignment requirements
 	log.Printf("writing level 1\n")
 	for _, i := range t.level1 {
 		if err := binary.Write(bw, binary.LittleEndian, i); err != nil {
