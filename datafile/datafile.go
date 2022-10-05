@@ -23,11 +23,14 @@ import (
 
 const (
 	magicDataHeader    = 0xC0FFEE0D
+	fileFormatVersion  = 2
 	defaultBufferSize  = 4 * 1024 * 1024
-	recordHeaderSize   = 4 + 4 // 32-bit record length + 32-bit checksum of the value
+	recordHeaderSize   = 4 + 1 + 1 // 32-bit checksum of the value + 8-bit key length + 8-bit value length
 	fileHeaderSize     = 128
-	maximumKeyLength   = 256
-	maximumValueLength = 1 << 24
+	maximumKeyLength   = (1 << 8) - 1
+	maximumValueLength = (1 << 8) - 1
+	headerKeyLenOff    = 4
+	headerValueLenOff  = 5
 )
 
 type nopWriter struct{}
@@ -63,7 +66,7 @@ func (w *Writer) writeHeader() error {
 	var headerBuf [fileHeaderSize]byte
 	binary.LittleEndian.PutUint32(headerBuf[:4], magicDataHeader)
 	// current file format version
-	binary.LittleEndian.PutUint32(headerBuf[4:8], 1)
+	binary.LittleEndian.PutUint32(headerBuf[4:8], fileFormatVersion)
 
 	_, err := w.w.Write(headerBuf[:])
 	if err != nil {
@@ -74,23 +77,23 @@ func (w *Writer) writeHeader() error {
 }
 
 func (w *Writer) writeRecordHeader(key, value []byte) (int, error) {
+	if len(key) > maximumKeyLength {
+		return 0, fmt.Errorf("key %q too long", string(key))
+	}
+	if len(value) > maximumValueLength {
+		return 0, fmt.Errorf("value %q too long", string(value))
+	}
 	checksum := uint32(farm.Hash64(value))
 	header := w.headerBuf
-	packedSize := (uint32(len(value)) << 8) | (uint32(len(key)) & 0xff)
 	binary.LittleEndian.PutUint32(header[:4], checksum)
-	binary.LittleEndian.PutUint32(header[4:], packedSize)
+	header[headerKeyLenOff] = uint8(len(key))
+	header[headerValueLenOff] = uint8(len(value))
 	return w.w.Write(header[:])
 }
 
 func (w *Writer) Write(key, value []byte) (off uint64, err error) {
-	w.count += 1
 	off = w.off
-	if len(key) > maximumKeyLength {
-		return 0, fmt.Errorf("key length %d greater than %d", len(key), maximumKeyLength)
-	}
-	if len(value) > maximumValueLength {
-		return 0, fmt.Errorf("value length %d greater than %d", len(value), maximumValueLength)
-	}
+
 	headerWritten, err := w.writeRecordHeader(key, value)
 	if err != nil {
 		return 0, fmt.Errorf("bufio.Write 1: %e", err)
@@ -103,10 +106,12 @@ func (w *Writer) Write(key, value []byte) (off uint64, err error) {
 	if err != nil {
 		return 0, fmt.Errorf("bufio.Write 3: %e", err)
 	}
+
 	recordLen := uint64(headerWritten + keyWritten + valueWritten)
 	w.off += recordLen
-	err = nil
-	return
+	w.count += 1
+
+	return off, nil
 }
 
 func (w *Writer) Close() error {
@@ -153,17 +158,17 @@ func NewMMapReaderWithPath(path string) (*Reader, error) {
 		return nil, fmt.Errorf("madvise: %s", err)
 	}
 
-	fileMagic := binary.LittleEndian.Uint32(m.Data()[:4])
+	fileMagic := binary.LittleEndian.Uint32(data[:4])
 	if fileMagic != magicDataHeader {
 		return nil, fmt.Errorf("bad magic number on data file %s (%x) -- not bit datafile or corrupted", path, fileMagic)
 	}
 
-	fileFormatVersion := binary.LittleEndian.Uint32(m.Data()[4:8])
-	if fileFormatVersion != 1 {
+	formatVersion := binary.LittleEndian.Uint32(data[4:8])
+	if formatVersion != fileFormatVersion {
 		return nil, fmt.Errorf("this version of the bit library can only read v1 data files; found v%d", fileFormatVersion)
 	}
 
-	entryCount := int64(binary.LittleEndian.Uint64(m.Data()[8:16]))
+	entryCount := int64(binary.LittleEndian.Uint64(data[8:16]))
 
 	r := &Reader{
 		mmap:       m,
@@ -186,9 +191,9 @@ func (r *Reader) ReadAt(off int64) (key, value []byte, err error) {
 	// bounds check elimination
 	_ = header[recordHeaderSize-1]
 	expectedChecksum := binary.LittleEndian.Uint32(header[:4])
-	packedLen := int64(binary.LittleEndian.Uint32(header[4:]))
-	valueLen := packedLen >> 8
-	keyLen := packedLen & 0xff
+	keyLen := int64(header[headerKeyLenOff])
+	valueLen := int64(header[headerValueLenOff])
+
 	if off+recordHeaderSize+valueLen+keyLen > int64(mLen) {
 		return nil, nil, fmt.Errorf("off %d + keyLen %d + valueLen %d beyond bounds (%d)", off, keyLen, valueLen, mLen)
 	}
