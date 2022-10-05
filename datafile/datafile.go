@@ -23,15 +23,18 @@ import (
 )
 
 const (
-	magicDataHeader    = 0xC0FFEE0D
-	fileFormatVersion  = 2
-	defaultBufferSize  = 4 * 1024 * 1024
-	recordHeaderSize   = 4 + 1 + 1 // 32-bit checksum of the value + 8-bit key length + 8-bit value length
-	fileHeaderSize     = 128
+	magicDataHeader   = 0xC0FFEE0D
+	fileFormatVersion = 2
+	defaultBufferSize = 4 * 1024 * 1024
+	recordHeaderSize  = 4 + 1 + 1 // 32-bit checksum of the value + 8-bit key length + 8-bit value length
+	fileHeaderSize    = 128
+
+	maximumOffset      = (1 << 48) - 1
 	maximumKeyLength   = (1 << 8) - 1
 	maximumValueLength = (1 << 8) - 1
-	headerKeyLenOff    = 4
-	headerValueLenOff  = 5
+
+	headerKeyLenOff   = 4
+	headerValueLenOff = 5
 )
 
 var (
@@ -66,6 +69,23 @@ func NewWriter(f *os.File) (*Writer, error) {
 	return w, nil
 }
 
+// PackedOffset packs datafile offset + record length into a 64-bit value
+type PackedOffset uint64
+
+func (po PackedOffset) Unpack() (off, recordLen uint64) {
+	packed := uint64(po)
+	off = packed >> 16
+	keyLen := (packed >> 8) & 0xff
+	valueLen := (packed) & 0xff
+
+	return off, recordHeaderSize + keyLen + valueLen
+}
+
+func NewPackedOffset(off uint64, keyLen, valueLen uint8) PackedOffset {
+	return PackedOffset((off << 48) | uint64(keyLen)<<8 | uint64(valueLen))
+
+}
+
 func (w *Writer) writeHeader() error {
 	// make the header the minimum cache-width we expect to see
 	var headerBuf [fileHeaderSize]byte
@@ -98,6 +118,10 @@ func (w *Writer) writeRecordHeader(key, value []byte) (int, error) {
 
 func (w *Writer) Write(key, value []byte) (off uint64, err error) {
 	off = w.off
+
+	if off > maximumOffset {
+		return 0, errors.New("data file has grown too large (>262 petabytes)")
+	}
 
 	headerWritten, err := w.writeRecordHeader(key, value)
 	if err != nil {
