@@ -153,7 +153,7 @@ func testTable(t *testing.T, keys []string, extra []string) {
 var (
 	words          []testEntry
 	wordsOnce      sync.Once
-	benchTable     *inMemoryTable
+	benchTable     *inMemoryBuilder
 	benchFlatTable *Table
 )
 
@@ -258,7 +258,7 @@ func loadBenchTable() {
 		it := &testIter{items: words}
 		defer it.Close()
 		var err error
-		benchTable, err = newInMemoryTable(it)
+		benchTable, err = newInMemoryBuilder(it)
 		if err != nil {
 			panic(err)
 		}
