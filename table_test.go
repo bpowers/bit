@@ -6,11 +6,11 @@ package bit
 
 import (
 	"bufio"
+	"bytes"
 	"os"
 	"sync"
 	"testing"
 
-	"github.com/bpowers/bit/internal/bytesutil"
 	"github.com/stretchr/testify/require"
 )
 
@@ -86,7 +86,7 @@ func openTestFile(path string) (*Table, map[string]string, error) {
 	s := bufio.NewScanner(bufio.NewReaderSize(f, 16*1024))
 	for s.Scan() {
 		line := s.Bytes()
-		k, v, ok := bytesutil.Cut(line, ':')
+		k, v, ok := bytes.Cut(line, []byte{':'})
 		if !ok {
 			panic("input file unexpected shape")
 		}
