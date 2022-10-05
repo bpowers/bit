@@ -8,6 +8,7 @@ import (
 	"bufio"
 	"context"
 	"encoding/binary"
+	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -31,6 +32,10 @@ const (
 	maximumValueLength = (1 << 8) - 1
 	headerKeyLenOff    = 4
 	headerValueLenOff  = 5
+)
+
+var (
+	InvalidOffset = errors.New("invalid offset")
 )
 
 type nopWriter struct{}
@@ -111,6 +116,13 @@ func (w *Writer) Write(key, value []byte) (off uint64, err error) {
 	w.off += recordLen
 	w.count += 1
 
+	if off == 0 {
+		// This can be removed in prod, but documents our expectation here
+		// (elsewhere we use an offset of '0' as a sentinel representing
+		// 'invalid/bad index lookup')
+		panic("invariant broken: always expect off to be non-negative")
+	}
+
 	return off, nil
 }
 
@@ -182,6 +194,14 @@ func (r *Reader) Len() int64 {
 }
 
 func (r *Reader) ReadAt(off int64) (key, value []byte, err error) {
+	// an offset of 0 is never valid -- offsets are absolute from the
+	// start of the datafile, and datafiles _always_ have a 128-byte
+	// header.  This doesn't indicate corruption -- if someone looks
+	// up a non-existent key they could find a 0 in the index.
+	if off == 0 {
+		return nil, nil, InvalidOffset
+	}
+
 	m := r.mmap.Data()
 	mLen := len(m)
 	if off+recordHeaderSize > int64(len(m)) {
@@ -199,8 +219,6 @@ func (r *Reader) ReadAt(off int64) (key, value []byte, err error) {
 	}
 	key = m[off+recordHeaderSize : off+recordHeaderSize+keyLen]
 	value = m[off+recordHeaderSize+keyLen : off+recordHeaderSize+keyLen+valueLen]
-	// bounds check elimination
-	_ = value[valueLen-1]
 	checksum := uint32(farm.Hash64(value))
 	if expectedChecksum != checksum {
 		return nil, nil, fmt.Errorf("off %d checksum failed (%d != %d): data file corrupted", off, expectedChecksum, checksum)

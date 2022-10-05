@@ -10,6 +10,7 @@ import (
 	"bytes"
 	"errors"
 	"fmt"
+	"log"
 	"os"
 	"path/filepath"
 
@@ -165,6 +166,10 @@ func (t *Table) GetString(key string) ([]byte, bool) {
 	off := t.idx.MaybeLookupString(key)
 	expectedKey, value, err := t.data.ReadAt(int64(off))
 	if err != nil {
+		if err != datafile.InvalidOffset {
+			// TODO: remove this before deploying to prod probably
+			log.Printf("bit.Table.GetString(%q): %s\n", key, err)
+		}
 		return nil, false
 	}
 	if string(expectedKey) != key {
@@ -181,6 +186,10 @@ func (t *Table) Get(key []byte) ([]byte, bool) {
 	off := t.idx.MaybeLookup(key)
 	expectedKey, value, err := t.data.ReadAt(int64(off))
 	if err != nil {
+		if err != datafile.InvalidOffset {
+			// TODO: remove this before deploying to prod probably
+			log.Printf("bit.Table.Get(%q): %s\n", key, err)
+		}
 		return nil, false
 	}
 	if !bytes.Equal(expectedKey, key) {
