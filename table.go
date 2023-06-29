@@ -40,7 +40,7 @@ func NewBuilder(dataFilePath string) (*Builder, error) {
 	dir := filepath.Dir(dataFilePath)
 	dataFile, err := os.CreateTemp(dir, "bit-builder.*.data")
 	if err != nil {
-		return nil, fmt.Errorf("CreateTemp failed (may need permissions for dir containing dataFile): %e", err)
+		return nil, fmt.Errorf("CreateTemp failed (may need permissions for dir %q containing dataFile): %w", dir, err)
 	}
 	w, err := datafile.NewWriter(dataFile)
 	if err != nil {
