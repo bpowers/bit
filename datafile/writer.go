@@ -10,6 +10,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"sync/atomic"
 
 	"github.com/dgryski/go-farm"
 )
@@ -39,51 +40,76 @@ func (nopWriter) Write([]byte) (int, error) {
 	return 0, io.EOF
 }
 
+type fileHeader struct {
+	magic         uint32
+	formatVersion uint32
+	recordCount   uint64
+}
+
+func newFileHeader() *fileHeader {
+	return &fileHeader{
+		magic:         magicDataHeader,
+		formatVersion: fileFormatVersion,
+	}
+}
+
+func (h *fileHeader) WriteTo(w io.Writer) (n int64, err error) {
+	// make the header the minimum cache-width we expect to see
+	var headerBuf [fileHeaderSize]byte
+	binary.LittleEndian.PutUint32(headerBuf[:4], h.magic)
+	// current file format version
+	binary.LittleEndian.PutUint32(headerBuf[4:8], h.formatVersion)
+
+	if _, err = w.Write(headerBuf[:]); err != nil {
+		return 0, fmt.Errorf("write: %w", err)
+	}
+	return int64(fileHeaderSize), nil
+}
+
+func (h *fileHeader) UpdateRecordCount(n uint64, w io.WriterAt) error {
+	h.recordCount = n
+
+	var recordCountBuf [8]byte
+	binary.LittleEndian.PutUint64(recordCountBuf[:], h.recordCount)
+	if _, err := w.WriteAt(recordCountBuf[:], 8); err != nil {
+		return fmt.Errorf("f.WriteAt: %w", err)
+	}
+
+	return nil
+}
+
 // FileWriter is usually an *os.File, but specified as an interface for easier testing.
 type FileWriter interface {
 	io.Writer
 	io.WriterAt
-	io.Closer
-	Sync() error
 }
 
 type Writer struct {
-	f     FileWriter
-	w     *bufio.Writer
-	off   uint64
-	count uint64
+	f        FileWriter
+	h        *fileHeader
+	w        *bufio.Writer
+	off      uint64
+	count    uint64
+	finished atomic.Bool
 }
 
 func NewWriter(f FileWriter) (*Writer, error) {
 	w := &Writer{
 		f: f,
+		h: newFileHeader(),
 		w: bufio.NewWriterSize(f, defaultBufferSize),
 	}
-	if err := w.writeFileHeader(); err != nil {
-		_ = w.Close()
-		return nil, err
+	if headerLen, err := w.h.WriteTo(w.w); err != nil {
+		return nil, fmt.Errorf("fileHeader.WriteTo: %w", err)
+	} else {
+		w.off = uint64(headerLen)
+	}
+	// try to catch errors when writing to the backing file early
+	if err := w.w.Flush(); err != nil {
+		return nil, fmt.Errorf("flush: %w", err)
 	}
 
 	return w, nil
-}
-
-func (w *Writer) writeFileHeader() error {
-	// make the header the minimum cache-width we expect to see
-	var headerBuf [fileHeaderSize]byte
-	binary.LittleEndian.PutUint32(headerBuf[:4], magicDataHeader)
-	// current file format version
-	binary.LittleEndian.PutUint32(headerBuf[4:8], fileFormatVersion)
-
-	_, err := w.w.Write(headerBuf[:])
-	if err != nil {
-		return fmt.Errorf("bufio.Write: %w", err)
-	}
-	if err = w.w.Flush(); err != nil {
-		return fmt.Errorf("bufio.Flush: %w", err)
-	}
-
-	w.off += uint64(fileHeaderSize)
-	return nil
 }
 
 func (w *Writer) writeRecordHeader(key, value []byte) (int, error) {
@@ -137,28 +163,21 @@ func (w *Writer) Write(key, value []byte) (off uint64, err error) {
 	return off, nil
 }
 
-func (w *Writer) Close() error {
-	// ensure we call close on our *os.File, even if other parts of this
-	// close method fail.
+func (w *Writer) Finish() error {
+	if alreadyFinished := w.finished.Swap(true); alreadyFinished {
+		// nothing to do - already cleaned up
+		return nil
+	}
+
 	defer func() {
-		_ = w.f.Close()
+		w.w.Reset(&nopWriter{})
+		w.w = nil
+		w.f = nil
 	}()
 
 	if err := w.w.Flush(); err != nil {
 		return fmt.Errorf("bufio.Flush: %w", err)
 	}
-	w.w.Reset(&nopWriter{})
-	w.w = nil
 
-	var recordCountBuf [8]byte
-	binary.LittleEndian.PutUint64(recordCountBuf[:], w.count)
-	if _, err := w.f.WriteAt(recordCountBuf[:], 8); err != nil {
-		return fmt.Errorf("f.WriteAt: %w", err)
-	}
-
-	if err := w.f.Sync(); err != nil {
-		return fmt.Errorf("f.Sync: %w", err)
-	}
-
-	return nil
+	return w.h.UpdateRecordCount(w.count, w.f)
 }

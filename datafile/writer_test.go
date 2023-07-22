@@ -7,7 +7,6 @@ package datafile
 import (
 	"errors"
 	"sync"
-	"sync/atomic"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -48,53 +47,38 @@ func (s *safeBuffer) Close() error {
 	return nil
 }
 
-func (s *safeBuffer) Sync() error {
-	return nil
-}
-
 var _ FileWriter = &safeBuffer{}
 
-type closeChecker struct {
+type testWriter struct {
 	inner            FileWriter
 	writeShouldError bool
-	closeCalled      atomic.Bool
 }
 
-func (c *closeChecker) Write(p []byte) (n int, err error) {
+func (c *testWriter) Write(p []byte) (n int, err error) {
 	if c.writeShouldError {
 		return 0, errors.New("write failed")
 	}
 	return c.inner.Write(p)
 }
 
-func (c *closeChecker) WriteAt(p []byte, off int64) (n int, err error) {
+func (c *testWriter) WriteAt(p []byte, off int64) (n int, err error) {
 	if c.writeShouldError {
 		return 0, errors.New("write failed")
 	}
 	return c.inner.WriteAt(p, off)
 }
 
-func (c *closeChecker) Close() error {
-	c.closeCalled.Store(true)
-	return c.inner.Close()
-}
-
-func (c *closeChecker) Sync() error {
-	return c.inner.Sync()
-}
-
-var _ FileWriter = &closeChecker{}
+var _ FileWriter = &testWriter{}
 
 func TestNewWriter_Errors(t *testing.T) {
 	var fileBytes safeBuffer
-	writer := &closeChecker{
+	writer := &testWriter{
 		inner:            &fileBytes,
 		writeShouldError: true,
 	}
 
 	_, err := NewWriter(writer)
 	assert.Error(t, err)
-	assert.True(t, writer.closeCalled.Load())
 }
 
 func TestWriter_TooBigErrors(t *testing.T) {
@@ -123,7 +107,10 @@ func TestWriter_TooBigErrors(t *testing.T) {
 	_, err = w.Write(k, v)
 	assert.Error(t, err)
 
-	err = w.Close()
+	err = w.Finish()
+	require.NoError(t, err)
+	// multiple finishes should be fine
+	err = w.Finish()
 	require.NoError(t, err)
 
 	// double check: we shouldn't have written any records

@@ -18,7 +18,6 @@ import (
 
 	"github.com/bpowers/bit/datafile"
 	"github.com/bpowers/bit/internal/bitset"
-	"github.com/bpowers/bit/internal/ondisk"
 	"github.com/bpowers/bit/internal/unsafestring"
 )
 
@@ -46,8 +45,13 @@ func buildInCore(f *os.File, it datafile.Iter) error {
 	return t.Write(f)
 }
 
+type Bucket struct {
+	N      int64
+	Values []uint32
+}
+
 // bySize is used to sort our buckets from most full to least full
-type bySize []ondisk.Bucket
+type bySize []Bucket
 
 func (s bySize) Len() int           { return len(s) }
 func (s bySize) Less(i, j int) bool { return len(s[i].Values) > len(s[j].Values) }
@@ -101,10 +105,10 @@ func newInMemoryBuilder(it datafile.Iter) (*inMemoryBuilder, error) {
 
 	log.Printf("collating sparse buckets\n")
 
-	var buckets []ondisk.Bucket
+	var buckets []Bucket
 	for n, vals := range sparseBuckets {
 		if len(vals) > 0 {
-			buckets = append(buckets, ondisk.Bucket{N: int64(n), Values: vals})
+			buckets = append(buckets, Bucket{N: int64(n), Values: vals})
 		}
 	}
 

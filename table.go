@@ -72,7 +72,7 @@ func (b *Builder) Finalize() (*Table, error) {
 
 // Finalize flushes the table to disk and builds an index to efficiently randomly access entries.
 func (b *Builder) finalize(indexBuildType indexfile.BuildType) (*Table, error) {
-	if err := b.dioWriter.Close(); err != nil {
+	if err := b.dioWriter.Finish(); err != nil {
 		return nil, fmt.Errorf("recordio.Close: %w", err)
 	}
 	// make the file read-only
