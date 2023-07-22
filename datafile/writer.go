@@ -21,7 +21,7 @@ const (
 	recordHeaderSize  = 4 + 1 + 2 // 32-bit checksum of the value + 8-bit key length + 16-bit value length
 	fileHeaderSize    = 128
 
-	maximumOffset      = (1 << 48) - 1
+	maximumOffset      = (1 << 40) - 1
 	maximumKeyLength   = (1 << 8) - 1
 	maximumValueLength = (1 << 16) - 1
 
@@ -87,6 +87,9 @@ func (w *Writer) writeFileHeader() error {
 }
 
 func (w *Writer) writeRecordHeader(key, value []byte) (int, error) {
+	if len(key) == 0 {
+		return 0, fmt.Errorf("empty key not supported")
+	}
 	if len(key) > maximumKeyLength {
 		return 0, fmt.Errorf("key %q too long", string(key))
 	}

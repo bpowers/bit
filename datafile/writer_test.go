@@ -11,11 +11,19 @@ import (
 	"testing"
 
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 type safeBuffer struct {
 	mu  sync.Mutex
 	buf []byte
+}
+
+func (s *safeBuffer) String() string {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	return string(s.buf)
 }
 
 func (s *safeBuffer) Write(p []byte) (n int, err error) {
@@ -87,4 +95,37 @@ func TestNewWriter_Errors(t *testing.T) {
 	_, err := NewWriter(writer)
 	assert.Error(t, err)
 	assert.True(t, writer.closeCalled.Load())
+}
+
+func TestWriter_TooBigErrors(t *testing.T) {
+	var fileBytes safeBuffer
+
+	w, err := NewWriter(&fileBytes)
+	require.NoError(t, err)
+
+	var k, v []byte
+
+	// key too big should be an error
+	k = make([]byte, maximumKeyLength+1)
+	v = make([]byte, 1)
+	_, err = w.Write(k, v)
+	assert.Error(t, err)
+
+	// 0-sized key should be an error
+	k = make([]byte, 0)
+	v = make([]byte, 1)
+	_, err = w.Write(k, v)
+	assert.Error(t, err)
+
+	// value too big should be an error
+	k = make([]byte, 1)
+	v = make([]byte, maximumValueLength+1)
+	_, err = w.Write(k, v)
+	assert.Error(t, err)
+
+	err = w.Close()
+	require.NoError(t, err)
+
+	// double check: we shouldn't have written any records
+	assert.Equal(t, fileHeaderSize, len(fileBytes.String()))
 }
