@@ -16,6 +16,9 @@ func TestBitset(t *testing.T) {
 	require.Equal(t, 2, len(b.bits))
 	require.Equal(t, int64(128), b.length)
 
+	// out of bounds, should be false
+	require.False(t, b.IsSet(155))
+
 	// should do nothing
 	b.Set(132)
 
