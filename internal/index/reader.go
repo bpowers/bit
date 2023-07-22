@@ -2,7 +2,7 @@
 // Use of this source code is governed by the MIT License
 // that can be found in the LICENSE file.
 
-package indexfile
+package index
 
 import (
 	"encoding/binary"
@@ -65,7 +65,7 @@ type Table struct {
 	offsetsMask uint64
 }
 
-// NewTable returns a new `*indexfile.Table` based on the on-disk table at `path`.
+// NewTable returns a new `*index.Table` based on the on-disk table at `path`.
 func NewTable(path string) (*Table, error) {
 	mm, err := mmap.Open(path)
 	if err != nil {
@@ -75,7 +75,7 @@ func NewTable(path string) (*Table, error) {
 	m := mm.Data()
 	fileMagic := binary.LittleEndian.Uint32(m[:4])
 	if fileMagic != magicIndexHeader {
-		return nil, fmt.Errorf("bad magic number on index file %s (%x) -- not bit indexfile or corrupted", path, fileMagic)
+		return nil, fmt.Errorf("bad magic number on index file %s (%x) -- not bit index or corrupted", path, fileMagic)
 	}
 
 	fileFormatVersion := binary.LittleEndian.Uint32(m[4:8])

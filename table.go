@@ -15,7 +15,7 @@ import (
 	"path/filepath"
 
 	"github.com/bpowers/bit/datafile"
-	"github.com/bpowers/bit/indexfile"
+	indexfile "github.com/bpowers/bit/internal/index"
 )
 
 // Builder is used to construct a big immutable table from key/value pairs.
@@ -152,7 +152,7 @@ func New(dataPath string) (*Table, error) {
 	}
 	idx, err := indexfile.NewTable(dataPath + ".index")
 	if err != nil {
-		return nil, fmt.Errorf("indexfile.NewTable: %e", err)
+		return nil, fmt.Errorf("index.NewTable: %e", err)
 	}
 	return &Table{
 		data: r,
