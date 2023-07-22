@@ -10,7 +10,6 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"os"
 
 	"github.com/dgryski/go-farm"
 )
@@ -40,19 +39,27 @@ func (nopWriter) Write([]byte) (int, error) {
 	return 0, io.EOF
 }
 
+// FileWriter is usually an *os.File, but specified as an interface for easier testing.
+type FileWriter interface {
+	io.Writer
+	io.WriterAt
+	io.Closer
+	Sync() error
+}
+
 type Writer struct {
-	f     *os.File
+	f     FileWriter
 	w     *bufio.Writer
 	off   uint64
 	count uint64
 }
 
-func NewWriter(f *os.File) (*Writer, error) {
+func NewWriter(f FileWriter) (*Writer, error) {
 	w := &Writer{
 		f: f,
 		w: bufio.NewWriterSize(f, defaultBufferSize),
 	}
-	if err := w.writeHeader(); err != nil {
+	if err := w.writeFileHeader(); err != nil {
 		_ = w.Close()
 		return nil, err
 	}
@@ -60,7 +67,7 @@ func NewWriter(f *os.File) (*Writer, error) {
 	return w, nil
 }
 
-func (w *Writer) writeHeader() error {
+func (w *Writer) writeFileHeader() error {
 	// make the header the minimum cache-width we expect to see
 	var headerBuf [fileHeaderSize]byte
 	binary.LittleEndian.PutUint32(headerBuf[:4], magicDataHeader)
@@ -69,8 +76,12 @@ func (w *Writer) writeHeader() error {
 
 	_, err := w.w.Write(headerBuf[:])
 	if err != nil {
-		return fmt.Errorf("bufio.Write: %e", err)
+		return fmt.Errorf("bufio.Write: %w", err)
 	}
+	if err = w.w.Flush(); err != nil {
+		return fmt.Errorf("bufio.Flush: %w", err)
+	}
+
 	w.off += uint64(fileHeaderSize)
 	return nil
 }
@@ -124,8 +135,14 @@ func (w *Writer) Write(key, value []byte) (off uint64, err error) {
 }
 
 func (w *Writer) Close() error {
+	// ensure we call close on our *os.File, even if other parts of this
+	// close method fail.
+	defer func() {
+		_ = w.f.Close()
+	}()
+
 	if err := w.w.Flush(); err != nil {
-		return fmt.Errorf("bufio.Flush: %e", err)
+		return fmt.Errorf("bufio.Flush: %w", err)
 	}
 	w.w.Reset(&nopWriter{})
 	w.w = nil
@@ -133,15 +150,11 @@ func (w *Writer) Close() error {
 	var recordCountBuf [8]byte
 	binary.LittleEndian.PutUint64(recordCountBuf[:], w.count)
 	if _, err := w.f.WriteAt(recordCountBuf[:], 8); err != nil {
-		return fmt.Errorf("f.WriteAt: %e", err)
+		return fmt.Errorf("f.WriteAt: %w", err)
 	}
 
 	if err := w.f.Sync(); err != nil {
-		return fmt.Errorf("f.Sync: %e", err)
-	}
-
-	if err := w.f.Close(); err != nil {
-		return fmt.Errorf("f.Close: %e", err)
+		return fmt.Errorf("f.Sync: %w", err)
 	}
 
 	return nil
