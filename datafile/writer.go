@@ -1,4 +1,4 @@
-// Copyright 2021 The bit Authors. All rights reserved.
+// Copyright 2023 The bit Authors. All rights reserved.
 // Use of this source code is governed by the MIT License
 // that can be found in the LICENSE file.
 
@@ -6,32 +6,25 @@ package datafile
 
 import (
 	"bufio"
-	"context"
 	"encoding/binary"
 	"errors"
 	"fmt"
 	"io"
 	"os"
-	"sync"
-	"syscall"
-
-	"golang.org/x/sys/unix"
 
 	"github.com/dgryski/go-farm"
-
-	"github.com/bpowers/bit/internal/exp/mmap"
 )
 
 const (
 	magicDataHeader   = 0xC0FFEE0D
-	fileFormatVersion = 2
+	fileFormatVersion = 3
 	defaultBufferSize = 4 * 1024 * 1024
-	recordHeaderSize  = 4 + 1 + 1 // 32-bit checksum of the value + 8-bit key length + 8-bit value length
+	recordHeaderSize  = 4 + 1 + 2 // 32-bit checksum of the value + 8-bit key length + 16-bit value length
 	fileHeaderSize    = 128
 
 	maximumOffset      = (1 << 48) - 1
 	maximumKeyLength   = (1 << 8) - 1
-	maximumValueLength = (1 << 8) - 1
+	maximumValueLength = (1 << 16) - 1
 
 	headerKeyLenOff   = 4
 	headerValueLenOff = 5
@@ -43,23 +36,21 @@ var (
 
 type nopWriter struct{}
 
-func (*nopWriter) Write([]byte) (int, error) {
+func (nopWriter) Write([]byte) (int, error) {
 	return 0, io.EOF
 }
 
 type Writer struct {
-	f         *os.File
-	w         *bufio.Writer
-	headerBuf []byte
-	off       uint64
-	count     uint64
+	f     *os.File
+	w     *bufio.Writer
+	off   uint64
+	count uint64
 }
 
 func NewWriter(f *os.File) (*Writer, error) {
 	w := &Writer{
-		f:         f,
-		w:         bufio.NewWriterSize(f, defaultBufferSize),
-		headerBuf: make([]byte, recordHeaderSize),
+		f: f,
+		w: bufio.NewWriterSize(f, defaultBufferSize),
 	}
 	if err := w.writeHeader(); err != nil {
 		_ = w.Close()
@@ -67,23 +58,6 @@ func NewWriter(f *os.File) (*Writer, error) {
 	}
 
 	return w, nil
-}
-
-// PackedOffset packs datafile offset + record length into a 64-bit value
-type PackedOffset uint64
-
-func (po PackedOffset) Unpack() (off int64, recordLen uint64) {
-	packed := uint64(po)
-	off = int64(packed >> 16)
-	keyLen := (packed >> 8) & 0xff
-	valueLen := (packed) & 0xff
-
-	return off, recordHeaderSize + keyLen + valueLen
-}
-
-func NewPackedOffset(off uint64, keyLen, valueLen uint8) PackedOffset {
-	return PackedOffset((off << 16) | uint64(keyLen)<<8 | uint64(valueLen))
-
 }
 
 func (w *Writer) writeHeader() error {
@@ -108,16 +82,22 @@ func (w *Writer) writeRecordHeader(key, value []byte) (int, error) {
 	if len(value) > maximumValueLength {
 		return 0, fmt.Errorf("value %q too long", string(value))
 	}
+
+	var header [recordHeaderSize]byte
+
 	checksum := uint32(farm.Hash64(value))
-	header := w.headerBuf
 	binary.LittleEndian.PutUint32(header[:4], checksum)
 	header[headerKeyLenOff] = uint8(len(key))
-	header[headerValueLenOff] = uint8(len(value))
+	binary.LittleEndian.PutUint16(header[headerValueLenOff:headerValueLenOff+2], uint16(len(value)))
+
 	return w.w.Write(header[:])
 }
 
 func (w *Writer) Write(key, value []byte) (off uint64, err error) {
 	off = w.off
+	if off == 0 {
+		return 0, errors.New("invariant broken: always expect *Writer.off to be > 0")
+	}
 
 	if off > maximumOffset {
 		return 0, errors.New("data file has grown too large (>262 petabytes)")
@@ -139,13 +119,6 @@ func (w *Writer) Write(key, value []byte) (off uint64, err error) {
 	recordLen := uint64(headerWritten + keyWritten + valueWritten)
 	w.off += recordLen
 	w.count += 1
-
-	if off == 0 {
-		// This can be removed in prod, but documents our expectation here
-		// (elsewhere we use an offset of '0' as a sentinel representing
-		// 'invalid/bad index lookup')
-		panic("invariant broken: always expect off to be non-negative")
-	}
 
 	return off, nil
 }
@@ -172,192 +145,4 @@ func (w *Writer) Close() error {
 	}
 
 	return nil
-}
-
-type Reader struct {
-	mmap       *mmap.ReaderAt
-	entryCount int64
-}
-
-func NewMMapReaderWithPath(path string) (*Reader, error) {
-	m, err := mmap.Open(path)
-	if err != nil {
-		return nil, fmt.Errorf("mmap.Open(%s): %e", path, err)
-	}
-
-	if m.Len() < fileHeaderSize {
-		return nil, fmt.Errorf("data file too short: %d < %d", m.Len(), fileHeaderSize)
-	}
-
-	data := m.Data()
-	if err := unix.Madvise(data, syscall.MADV_RANDOM); err != nil {
-		return nil, fmt.Errorf("madvise: %s", err)
-	}
-
-	fileMagic := binary.LittleEndian.Uint32(data[:4])
-	if fileMagic != magicDataHeader {
-		return nil, fmt.Errorf("bad magic number on data file %s (%x) -- not bit datafile or corrupted", path, fileMagic)
-	}
-
-	formatVersion := binary.LittleEndian.Uint32(data[4:8])
-	if formatVersion != fileFormatVersion {
-		return nil, fmt.Errorf("this version of the bit library can only read v1 data files; found v%d", fileFormatVersion)
-	}
-
-	entryCount := int64(binary.LittleEndian.Uint64(data[8:16]))
-
-	r := &Reader{
-		mmap:       m,
-		entryCount: entryCount,
-	}
-	return r, nil
-}
-
-func (r *Reader) Len() int64 {
-	return r.entryCount
-}
-
-func (r *Reader) ReadAt(poff PackedOffset) (key, value []byte, err error) {
-	off, _ := poff.Unpack()
-	// an offset of 0 is never valid -- offsets are absolute from the
-	// start of the datafile, and datafiles _always_ have a 128-byte
-	// header.  This doesn't indicate corruption -- if someone looks
-	// up a non-existent key they could find a 0 in the index.
-	if off == 0 {
-		return nil, nil, InvalidOffset
-	}
-
-	m := r.mmap.Data()
-	mLen := len(m)
-	if off+recordHeaderSize > int64(len(m)) {
-		return nil, nil, fmt.Errorf("off %d beyond bounds (%d)", off, mLen)
-	}
-	header := m[off : off+recordHeaderSize]
-	// bounds check elimination
-	_ = header[recordHeaderSize-1]
-	expectedChecksum := binary.LittleEndian.Uint32(header[:4])
-	keyLen := int64(header[headerKeyLenOff])
-	valueLen := int64(header[headerValueLenOff])
-
-	if off+recordHeaderSize+valueLen+keyLen > int64(mLen) {
-		return nil, nil, fmt.Errorf("off %d + keyLen %d + valueLen %d beyond bounds (%d)", off, keyLen, valueLen, mLen)
-	}
-	key = m[off+recordHeaderSize : off+recordHeaderSize+keyLen]
-	value = m[off+recordHeaderSize+keyLen : off+recordHeaderSize+keyLen+valueLen]
-	checksum := uint32(farm.Hash64(value))
-	if expectedChecksum != checksum {
-		return nil, nil, fmt.Errorf("off %d checksum failed (%d != %d): data file corrupted", off, expectedChecksum, checksum)
-	}
-	return key, value, nil
-}
-
-func (r *Reader) Iter() Iter {
-	return &iter{r: r}
-}
-
-type IterItem struct {
-	Key    []byte
-	Value  []byte
-	Offset int64
-}
-
-func (ii IterItem) PackedOffset() PackedOffset {
-	if ii.Offset < 0 || len(ii.Key) > maximumKeyLength || len(ii.Value) > maximumValueLength {
-		panic("PackedOffset invariants broken!")
-	}
-	return NewPackedOffset(uint64(ii.Offset), uint8(len(ii.Key)), uint8(len(ii.Value)))
-}
-
-// Iter iterates over the contents in a logfile.  Make sure to `defer it.Close()`.
-type Iter interface {
-	Close()
-	Iter() <-chan IterItem
-	Len() int64
-	ReadAt(off PackedOffset) (key []byte, value []byte, err error)
-	Next() (IterItem, bool)
-}
-
-type iter struct {
-	r     *Reader
-	mu    sync.Mutex
-	chans []struct {
-		cancel func()
-		ch     chan IterItem
-	}
-	off int64
-}
-
-// Close cleans up the iterator, closing the iteration channel and freeing resources.
-func (i *iter) Close() {
-	i.mu.Lock()
-	defer i.mu.Unlock()
-	for _, ch := range i.chans {
-		ch.cancel()
-	}
-	i.chans = nil
-}
-
-func (i *iter) Iter() <-chan IterItem {
-	i.mu.Lock()
-	defer i.mu.Unlock()
-	ctx, cancel := context.WithCancel(context.Background())
-	// unbuffered
-	ch := make(chan IterItem, 0)
-	i.chans = append(i.chans, struct {
-		cancel func()
-		ch     chan IterItem
-	}{
-		cancel: cancel,
-		ch:     ch,
-	})
-	go i.producer(ctx, ch)
-	return ch
-}
-
-func (i *iter) Next() (IterItem, bool) {
-	if i.off == 0 {
-		i.off = int64(fileHeaderSize)
-	}
-
-	k, v, err := i.r.ReadAt(NewPackedOffset(uint64(i.off), 0, 0))
-	if err != nil {
-		return IterItem{}, false
-	}
-
-	item := IterItem{
-		Key:    k,
-		Value:  v,
-		Offset: i.off,
-	}
-
-	i.off += recordHeaderSize + int64(len(k)) + int64(len(v))
-
-	return item, true
-}
-
-func (i *iter) producer(_ context.Context, ch chan<- IterItem) {
-	defer close(ch)
-
-	off := int64(fileHeaderSize)
-	for {
-		k, v, err := i.r.ReadAt(NewPackedOffset(uint64(off), 0, 0))
-		if err != nil {
-			return
-		}
-		item := IterItem{
-			Key:    k,
-			Value:  v,
-			Offset: off,
-		}
-		ch <- item
-		off += recordHeaderSize + int64(len(k)) + int64(len(v))
-	}
-}
-
-func (i *iter) Len() int64 {
-	return i.r.Len()
-}
-
-func (i *iter) ReadAt(off PackedOffset) (key []byte, value []byte, err error) {
-	return i.r.ReadAt(off)
 }
