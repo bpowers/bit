@@ -40,44 +40,6 @@ func (nopWriter) Write([]byte) (int, error) {
 	return 0, io.EOF
 }
 
-type fileHeader struct {
-	magic         uint32
-	formatVersion uint32
-	recordCount   uint64
-}
-
-func newFileHeader() *fileHeader {
-	return &fileHeader{
-		magic:         magicDataHeader,
-		formatVersion: fileFormatVersion,
-	}
-}
-
-func (h *fileHeader) WriteTo(w io.Writer) (n int64, err error) {
-	// make the header the minimum cache-width we expect to see
-	var headerBuf [fileHeaderSize]byte
-	binary.LittleEndian.PutUint32(headerBuf[:4], h.magic)
-	// current file format version
-	binary.LittleEndian.PutUint32(headerBuf[4:8], h.formatVersion)
-
-	if _, err = w.Write(headerBuf[:]); err != nil {
-		return 0, fmt.Errorf("write: %w", err)
-	}
-	return int64(fileHeaderSize), nil
-}
-
-func (h *fileHeader) UpdateRecordCount(n uint64, w io.WriterAt) error {
-	h.recordCount = n
-
-	var recordCountBuf [8]byte
-	binary.LittleEndian.PutUint64(recordCountBuf[:], h.recordCount)
-	if _, err := w.WriteAt(recordCountBuf[:], 8); err != nil {
-		return fmt.Errorf("f.WriteAt: %w", err)
-	}
-
-	return nil
-}
-
 // FileWriter is usually an *os.File, but specified as an interface for easier testing.
 type FileWriter interface {
 	io.Writer

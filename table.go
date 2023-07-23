@@ -97,7 +97,7 @@ func (b *Builder) finalize(indexBuildType indexfile.BuildType) (*Table, error) {
 }
 
 func buildIndexFor(dataPath string, indexBuildType indexfile.BuildType) error {
-	r, err := datafile.NewMMapReaderAtPath(dataPath)
+	r, err := datafile.NewReader(dataPath)
 	if err != nil {
 		return fmt.Errorf("datafile.NewMMapReaderAtPath(%s): %w", dataPath, err)
 	}
@@ -146,7 +146,7 @@ type Table struct {
 
 // New opens a bit table for reading, returning an error if things go wrong.
 func New(dataPath string) (*Table, error) {
-	r, err := datafile.NewMMapReaderAtPath(dataPath)
+	r, err := datafile.NewReader(dataPath)
 	if err != nil {
 		return nil, fmt.Errorf("datafile.NewMMapReaderAtPath(%s): %e", dataPath, err)
 	}
