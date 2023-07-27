@@ -116,3 +116,49 @@ func TestWriter_TooBigErrors(t *testing.T) {
 	// double check: we shouldn't have written any records
 	assert.Equal(t, fileHeaderSize, len(fileBytes.String()))
 }
+
+func TestFileHeaderRoundtrips(t *testing.T) {
+	var zero [32]byte
+
+	origH, err := newFileHeader()
+	require.NoError(t, err)
+	require.Equal(t, uint32(magicDataHeader), origH.magic)
+	require.Equal(t, uint32(fileFormatVersion), origH.formatVersion)
+	require.NotEqual(t, zero, origH.fileID)
+	origH.recordCount = 3
+	origH.indexStart = 129
+	origH.indexLevel0Count = 512
+	origH.indexLevel1Count = 1298
+
+	// this should be an error
+	err = origH.MarshalTo(nil)
+	assert.Error(t, err)
+
+	var newH fileHeader
+	headerBytes := make([]byte, fileHeaderSize)
+	// this should be an error -- missing magic number
+	err = newH.UnmarshalBytes(headerBytes)
+	assert.Error(t, err)
+
+	err = origH.MarshalTo(headerBytes)
+	require.NoError(t, err)
+
+	// this should be an error
+	err = newH.UnmarshalBytes(nil)
+	assert.Error(t, err)
+
+	err = newH.UnmarshalBytes(headerBytes)
+	require.NoError(t, err)
+
+	assert.Equal(t, origH, &newH)
+
+	// test that deserializing an unknown version is broken
+	origH.formatVersion = 666
+	err = origH.MarshalTo(headerBytes)
+	require.NoError(t, err)
+	// this should be an error
+	err = newH.UnmarshalBytes(headerBytes)
+	assert.Error(t, err)
+
+	_ = zero
+}
