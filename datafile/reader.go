@@ -8,16 +8,18 @@ import (
 	"context"
 	"encoding/binary"
 	"fmt"
+	"os"
 	"sync"
-	"syscall"
 
-	"github.com/bpowers/bit/internal/exp/mmap"
 	"github.com/dgryski/go-farm"
-	"golang.org/x/sys/unix"
 )
 
 // PackedOffset packs datafile offset + record length into a 64-bit value
 type PackedOffset uint64
+
+func NewPackedOffset(off uint64, keyLen uint8, valueLen uint16) PackedOffset {
+	return PackedOffset((off << 24) | uint64(keyLen)<<16 | uint64(valueLen))
+}
 
 func (po PackedOffset) Unpack() (off int64, recordLen uint64) {
 	packed := uint64(po)
@@ -28,48 +30,33 @@ func (po PackedOffset) Unpack() (off int64, recordLen uint64) {
 	return off, recordHeaderSize + keyLen + valueLen
 }
 
-func NewPackedOffset(off uint64, keyLen uint8, valueLen uint16) PackedOffset {
-	return PackedOffset((off << 24) | uint64(keyLen)<<16 | uint64(valueLen))
-}
-
-// unsyncReaderAt is the "backend" for reader -- it could be provided by e.g. an
-// mmap backend, or one that reads from disk using the pread(2) syscall.
-type unsyncReaderAt interface {
-	// ReadAt returns the key and value bytes at a given offset -- key
-	// and value MUST NOT be written to, and may be overwritten by the
-	// next call to ReadAt.
-	ReadAt(pOff PackedOffset) (key, value []byte, err error)
-	Close() error
-}
-
 type Reader struct {
-	h    fileHeader
-	mmap *mmap.ReaderAt
+	h   fileHeader
+	f   *os.File
+	buf []byte
 }
 
 func NewReader(path string) (*Reader, error) {
-	m, err := mmap.Open(path)
+	f, err := os.Open(path)
 	if err != nil {
-		return nil, fmt.Errorf("mmap.Open(%s): %e", path, err)
+		return nil, fmt.Errorf("os.Open(%q): %w", path, err)
 	}
 
-	if m.Len() < fileHeaderSize {
-		return nil, fmt.Errorf("data file too short: %d < %d", m.Len(), fileHeaderSize)
-	}
-
-	data := m.Data()
-	if err := unix.Madvise(data, syscall.MADV_RANDOM); err != nil {
-		return nil, fmt.Errorf("madvise: %s", err)
+	headerBytes := make([]byte, fileHeaderSize)
+	if n, err := f.Read(headerBytes); err != nil || n != fileHeaderSize {
+		_ = f.Close()
+		return nil, fmt.Errorf("error reading file header: %s", err)
 	}
 
 	var header fileHeader
-	if err := header.UnmarshalBytes(data); err != nil {
+	if err := header.UnmarshalBytes(headerBytes); err != nil {
 		return nil, fmt.Errorf("fileHeader.UnmarshalBytes: %w", err)
 	}
 
 	r := &Reader{
-		h:    header,
-		mmap: m,
+		h:   header,
+		f:   f,
+		buf: make([]byte, recordHeaderSize+maximumKeyLength+maximumValueLength),
 	}
 	return r, nil
 }
@@ -79,7 +66,7 @@ func (r *Reader) Len() int64 {
 }
 
 func (r *Reader) ReadAt(poff PackedOffset) (key, value []byte, err error) {
-	off, _ := poff.Unpack()
+	off, recordLen := poff.Unpack()
 	// an offset of 0 is never valid -- offsets are absolute from the
 	// start of the datafile, and datafiles _always_ have a 128-byte
 	// header.  This doesn't indicate corruption -- if someone looks
@@ -88,23 +75,24 @@ func (r *Reader) ReadAt(poff PackedOffset) (key, value []byte, err error) {
 		return nil, nil, InvalidOffset
 	}
 
-	m := r.mmap.Data()
-	mLen := len(m)
-	if off+recordHeaderSize > int64(len(m)) {
-		return nil, nil, fmt.Errorf("off %d beyond bounds (%d)", off, mLen)
+	header := r.buf[:recordLen]
+	n, err := r.f.ReadAt(header, off)
+	if err != nil || uint64(n) != recordLen {
+		return nil, nil, fmt.Errorf("short read; %d != expected %d", n, recordLen)
 	}
-	header := m[off : off+recordHeaderSize]
+
 	// bounds check elimination
 	_ = header[recordHeaderSize-1]
 	expectedChecksum := binary.LittleEndian.Uint32(header[:4])
 	keyLen := int64(header[headerKeyLenOff])
-	valueLen := int64(header[headerValueLenOff])
+	valueLen := int64(binary.LittleEndian.Uint16(header[headerValueLenOff : headerValueLenOff+2]))
 
-	if off+recordHeaderSize+valueLen+keyLen > int64(mLen) {
-		return nil, nil, fmt.Errorf("off %d + keyLen %d + valueLen %d beyond bounds (%d)", off, keyLen, valueLen, mLen)
+	if uint64(recordHeaderSize+keyLen+valueLen) != recordLen {
+		return nil, nil, fmt.Errorf("keyLen %d + valueLen %d beyond bounds (%d)", keyLen, valueLen, recordLen)
 	}
-	key = m[off+recordHeaderSize : off+recordHeaderSize+keyLen]
-	value = m[off+recordHeaderSize+keyLen : off+recordHeaderSize+keyLen+valueLen]
+
+	key = header[recordHeaderSize : recordHeaderSize+keyLen]
+	value = header[recordHeaderSize+keyLen : recordHeaderSize+keyLen+valueLen]
 	checksum := uint32(farm.Hash64(value))
 	if expectedChecksum != checksum {
 		return nil, nil, fmt.Errorf("off %d checksum failed (%d != %d): data file corrupted", off, expectedChecksum, checksum)
@@ -139,8 +127,10 @@ type Iter interface {
 }
 
 type iter struct {
-	r     *Reader
+	r *Reader
+
 	mu    sync.Mutex
+	f     *os.File
 	chans []struct {
 		cancel func()
 		ch     chan IterItem

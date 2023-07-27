@@ -21,24 +21,20 @@
 //	├───────────────────┤
 //	│ padding           │
 //	├───────────────────┤
-//	│ mph header        │
-//	├───────────────────┤
 //	│ minimal perfect   │
 //	│ hashmap           │
 //	│                   │
 //	└───────────────────┘
 //
-// Individual KV pairs stat with a fixed 7-byte header and are variable length,
-// and look like:
+// Individual KV pairs stat with a fixed 7-byte header and are variable length. An
+// entry for a 4-byte key and 15-byte value would look like:
 //
-//	 0    1    2    3    4    5    6    7
-//	+----+----+----+----+----+----+----+----+
-//	| value checksum    |klen| vlen    |key.|
-//	+----+----+----+----+----+----+----+----+
-//	| key...       | value...               |
-//	+----+----+----+----+----+----+----+----+
-//	| value...                              |
-//	+----+----+----+----+----+----+----+----+
+//	 0    1    2    3    4    5    6    7    8    9    A    B    C    D    E    F
+//	+----+----+----+----+----+----+----+----+----+----+----+----+----+----+----+----+
+//	| value checksum    |klen| vlen    |key                | value...               |
+//	+----+----+----+----+----+----+----+----+----+----+----+----+----+----+----+----+
+//	| value...                                        |
+//	+----+----+----+----+----+----+----+----+----+----+----+----+----+----+----+----+
 //
 // This gives us a 255-byte max length for keys, and a 65-KB max length for values.
 // The checksum is calculated from the bytes of the value, and is used to ensure we

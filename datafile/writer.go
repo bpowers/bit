@@ -16,11 +16,8 @@ import (
 )
 
 const (
-	magicDataHeader   = 0xC0FFEE0D
-	fileFormatVersion = 3
 	defaultBufferSize = 4 * 1024 * 1024
 	recordHeaderSize  = 4 + 1 + 2 // 32-bit checksum of the value + 8-bit key length + 16-bit value length
-	fileHeaderSize    = 128
 
 	maximumOffset      = (1 << 40) - 1
 	maximumKeyLength   = (1 << 8) - 1
@@ -56,16 +53,22 @@ type Writer struct {
 }
 
 func NewWriter(f FileWriter) (*Writer, error) {
+	h, err := newFileHeader()
+	if err != nil {
+		return nil, fmt.Errorf("newFileHeader: %w", err)
+	}
 	w := &Writer{
 		f: f,
-		h: newFileHeader(),
+		h: h,
 		w: bufio.NewWriterSize(f, defaultBufferSize),
 	}
+
 	if headerLen, err := w.h.WriteTo(w.w); err != nil {
 		return nil, fmt.Errorf("fileHeader.WriteTo: %w", err)
 	} else {
 		w.off = uint64(headerLen)
 	}
+
 	// try to catch errors when writing to the backing file early
 	if err := w.w.Flush(); err != nil {
 		return nil, fmt.Errorf("flush: %w", err)
