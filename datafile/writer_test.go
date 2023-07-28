@@ -6,6 +6,7 @@ package datafile
 
 import (
 	"errors"
+	"strconv"
 	"sync"
 	"testing"
 
@@ -113,6 +114,53 @@ func TestWriter_TooBigErrors(t *testing.T) {
 	err = w.Finish()
 	require.NoError(t, err)
 
-	// double check: we shouldn't have written any records
-	assert.Equal(t, fileHeaderSize, len(fileBytes.String()))
+	{
+		origOff := w.off
+
+		w.off = 0
+		_, err := w.Write([]byte("k"), []byte("v"))
+		assert.Error(t, err)
+
+		w.off = maximumOffset + 1
+		_, err = w.Write([]byte("k"), []byte("v"))
+		assert.Error(t, err)
+
+		w.off = origOff
+	}
+
+	// double check: we shouldn't have written any records, but we _should_ have padded
+	// out to 2 MB
+	assert.Equal(t, hugePageSize, len(fileBytes.String()))
+	var h fileHeader
+	err = h.UnmarshalBytes([]byte(fileBytes.String()))
+	require.NoError(t, err)
+	assert.Equal(t, uint64(0), h.recordCount)
+}
+
+func TestWriter_Finish(t *testing.T) {
+	var fileBytes safeBuffer
+
+	w, err := NewWriter(&fileBytes)
+	require.NoError(t, err)
+
+	for i := 0; i < 1000; i++ {
+		k := []byte(strconv.FormatInt(int64(i), 10))
+		v := make([]byte, maximumValueLength)
+		for j := 0; j < len(v); j++ {
+			v[j] = byte(i % 256)
+		}
+		_, err := w.Write(k, v)
+		require.NoError(t, err)
+	}
+
+	err = w.Finish()
+	require.NoError(t, err)
+
+	contents := fileBytes.String()
+	assert.Equal(t, 0, len(contents)%hugePageSize)
+	var h fileHeader
+	err = h.UnmarshalBytes([]byte(contents[:fileHeaderSize]))
+	require.NoError(t, err)
+	assert.Equal(t, uint64(1000), h.recordCount)
+
 }

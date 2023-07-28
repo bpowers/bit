@@ -25,6 +25,8 @@ const (
 
 	headerKeyLenOff   = 4
 	headerValueLenOff = 5
+
+	hugePageSize = 2 * 1024 * 1024
 )
 
 var (
@@ -69,7 +71,7 @@ func NewWriter(f FileWriter) (*Writer, error) {
 		w.off = uint64(headerLen)
 	}
 
-	// try to catch errors when writing to the backing file early
+	// try to expose errors when writing to the backing file early
 	if err := w.w.Flush(); err != nil {
 		return nil, fmt.Errorf("flush: %w", err)
 	}
@@ -139,6 +141,12 @@ func (w *Writer) Finish() error {
 		w.w = nil
 		w.f = nil
 	}()
+
+	// pad up so the header + data portion of our file is a multiple of 2MB
+	if w.off%hugePageSize != 0 {
+		zeroes := make([]byte, hugePageSize-(w.off%hugePageSize))
+		_, _ = w.w.Write(zeroes)
+	}
 
 	if err := w.w.Flush(); err != nil {
 		return fmt.Errorf("bufio.Flush: %w", err)
