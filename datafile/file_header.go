@@ -94,9 +94,7 @@ func (h *fileHeader) WriteTo(w io.Writer) (n int64, err error) {
 	return int64(fileHeaderSize), nil
 }
 
-func (h *fileHeader) UpdateRecordCount(n uint64, w io.WriterAt) error {
-	h.recordCount = n
-
+func (h *fileHeader) writeAt(w io.WriterAt) error {
 	var headerBuf [fileHeaderSize]byte
 	if err := h.MarshalTo(headerBuf[:]); err != nil {
 		return fmt.Errorf("marshalTo: %w", err)
@@ -107,6 +105,20 @@ func (h *fileHeader) UpdateRecordCount(n uint64, w io.WriterAt) error {
 	}
 
 	return nil
+}
+
+func (h *fileHeader) UpdateRecordCount(n uint64, w io.WriterAt) error {
+	h.recordCount = n
+
+	return h.writeAt(w)
+}
+
+func (h *fileHeader) UpdateIndex(start, level0Count, level1Count uint64, w io.WriterAt) error {
+	h.indexStart = start
+	h.indexLevel0Count = level0Count
+	h.indexLevel1Count = level1Count
+
+	return h.writeAt(w)
 }
 
 func (h *fileHeader) UnmarshalBytes(headerBytes []byte) error {
