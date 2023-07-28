@@ -6,6 +6,7 @@ package datafile
 
 import (
 	"errors"
+	"os"
 	"strconv"
 	"sync"
 	"testing"
@@ -206,7 +207,17 @@ func TestWriter_RoundTrip(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, uint64(1000), h.recordCount)
 
-	r, err := NewReader(&fileBytes)
+	dataFile, err := os.CreateTemp("", "bit-test.*.data")
+	require.NoError(t, err)
+	defer func() {
+		_ = os.Remove(dataFile.Name())
+	}()
+	n, err := dataFile.WriteString(contents)
+	require.NoError(t, err)
+	require.Equal(t, n, len(contents))
+	require.NoError(t, dataFile.Close())
+
+	r, err := NewMMapReaderWithPath(dataFile.Name())
 	require.NoError(t, err)
 	require.NotNil(t, r)
 
@@ -214,7 +225,7 @@ func TestWriter_RoundTrip(t *testing.T) {
 
 	i := 0
 	it := r.Iter()
-	for item := range it.Iter() {
+	for item, ok := it.Next(); ok; item, ok = it.Next() {
 		assert.Equal(t, strconv.FormatInt(int64(i), 10), string(item.Key))
 		i++
 	}
