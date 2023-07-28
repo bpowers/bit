@@ -225,8 +225,14 @@ func TestWriter_RoundTrip(t *testing.T) {
 
 	i := 0
 	it := r.Iter()
+	assert.Equal(t, int64(1000), it.Len())
 	for item, ok := it.Next(); ok; item, ok = it.Next() {
 		assert.Equal(t, strconv.FormatInt(int64(i), 10), string(item.Key))
+
+		k2, v2, err := it.ReadAt(item.PackedOffset())
+		require.NoError(t, err)
+		require.Equal(t, item.Key, k2)
+		require.Equal(t, item.Value, v2)
 		i++
 	}
 	require.Equal(t, 1000, i)
@@ -234,4 +240,12 @@ func TestWriter_RoundTrip(t *testing.T) {
 	// should be safe for multiple closes
 	it.Close()
 	it.Close()
+}
+
+func TestReader_Errors(t *testing.T) {
+	_, err := NewMMapReaderWithPath("/doesnt/exist")
+	assert.Error(t, err)
+
+	_, err = NewMMapReaderWithPath("/dev/null")
+	assert.Error(t, err)
 }

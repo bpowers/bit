@@ -143,7 +143,7 @@ func buildIndexFor(dataPath string, indexBuildType indexfile.BuildType) error {
 // that (a) keys passed to Get exactly match the key in the entry, and (b) the value's checksum
 // matches one we stored at table build time.
 type Table struct {
-	data *datafile.Reader
+	data *datafile.MmapReader
 	idx  *indexfile.Table
 }
 

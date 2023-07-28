@@ -38,12 +38,12 @@ type FileReader interface {
 	io.Closer
 }
 
-type Reader struct {
+type MmapReader struct {
 	h    fileHeader
 	mmap *mmap.ReaderAt
 }
 
-func NewMMapReaderWithPath(path string) (*Reader, error) {
+func NewMMapReaderWithPath(path string) (*MmapReader, error) {
 	m, err := mmap.Open(path)
 	if err != nil {
 		return nil, fmt.Errorf("mmap.Open(%s): %e", path, err)
@@ -63,14 +63,14 @@ func NewMMapReaderWithPath(path string) (*Reader, error) {
 		return nil, fmt.Errorf("fileHeader.UnmarshalBytes: %w", err)
 	}
 
-	r := &Reader{
+	r := &MmapReader{
 		h:    header,
 		mmap: m,
 	}
 	return r, nil
 }
 
-func (r *Reader) Len() int64 {
+func (r *MmapReader) Len() int64 {
 	return int64(r.h.recordCount)
 }
 
@@ -83,7 +83,7 @@ func readRecordHeader(header []byte) (expectedChecksum uint32, keyLen, valueLen 
 	return
 }
 
-func (r *Reader) ReadAt(poff PackedOffset) (key, value []byte, err error) {
+func (r *MmapReader) ReadAt(poff PackedOffset) (key, value []byte, err error) {
 	off, _ := poff.Unpack()
 	// an offset of 0 is never valid -- offsets are absolute from the
 	// start of the datafile, and datafiles _always_ have a 128-byte
@@ -115,7 +115,7 @@ func (r *Reader) ReadAt(poff PackedOffset) (key, value []byte, err error) {
 	return key, value, nil
 }
 
-func (r *Reader) Iter() Iter {
+func (r *MmapReader) Iter() Iter {
 	return &iter{r: r}
 }
 
@@ -141,12 +141,8 @@ type Iter interface {
 }
 
 type iter struct {
-	r     *Reader
-	mu    sync.Mutex
-	chans []struct {
-		cancel func()
-		ch     chan IterItem
-	}
+	r   *MmapReader
+	mu  sync.Mutex
 	off int64
 }
 
@@ -154,10 +150,6 @@ type iter struct {
 func (i *iter) Close() {
 	i.mu.Lock()
 	defer i.mu.Unlock()
-	for _, ch := range i.chans {
-		ch.cancel()
-	}
-	i.chans = nil
 }
 
 func (i *iter) Next() (IterItem, bool) {
@@ -189,6 +181,8 @@ func (i *iter) ReadAt(off PackedOffset) (key []byte, value []byte, err error) {
 	return i.r.ReadAt(off)
 }
 
+/*
+
 type reader struct {
 	f   FileReader
 	off int64
@@ -202,9 +196,8 @@ func (r *reader) Read(p []byte) (n int, err error) {
 	return
 }
 
-var _ io.Reader = &reader{}
+var _ io.MmapReader = &reader{}
 
-/*
 func (i *iter) producer(_ context.Context, ch chan<- IterItem) {
 	defer close(ch)
 
