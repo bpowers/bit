@@ -5,10 +5,11 @@
 package datafile
 
 import (
+	"bufio"
 	"context"
 	"encoding/binary"
 	"fmt"
-	"os"
+	"io"
 	"sync"
 
 	"github.com/dgryski/go-farm"
@@ -30,20 +31,20 @@ func (po PackedOffset) Unpack() (off int64, recordLen uint64) {
 	return off, recordHeaderSize + keyLen + valueLen
 }
 
+type FileReader interface {
+	io.ReaderAt
+	io.Closer
+}
+
 type Reader struct {
 	h   fileHeader
-	f   *os.File
+	f   FileReader
 	buf []byte
 }
 
-func NewReader(path string) (*Reader, error) {
-	f, err := os.Open(path)
-	if err != nil {
-		return nil, fmt.Errorf("os.Open(%q): %w", path, err)
-	}
-
+func NewReader(f FileReader) (*Reader, error) {
 	headerBytes := make([]byte, fileHeaderSize)
-	if n, err := f.Read(headerBytes); err != nil || n != fileHeaderSize {
+	if n, err := f.ReadAt(headerBytes, 0); err != nil || n != fileHeaderSize {
 		_ = f.Close()
 		return nil, fmt.Errorf("error reading file header: %s", err)
 	}
@@ -65,6 +66,15 @@ func (r *Reader) Len() int64 {
 	return int64(r.h.recordCount)
 }
 
+func readRecordHeader(header []byte) (expectedChecksum uint32, keyLen, valueLen int64) {
+	_ = header[recordHeaderSize-1]
+
+	expectedChecksum = binary.LittleEndian.Uint32(header[:4])
+	keyLen = int64(header[headerKeyLenOff])
+	valueLen = int64(binary.LittleEndian.Uint16(header[headerValueLenOff : headerValueLenOff+2]))
+	return
+}
+
 func (r *Reader) ReadAt(poff PackedOffset) (key, value []byte, err error) {
 	off, recordLen := poff.Unpack()
 	// an offset of 0 is never valid -- offsets are absolute from the
@@ -83,9 +93,7 @@ func (r *Reader) ReadAt(poff PackedOffset) (key, value []byte, err error) {
 
 	// bounds check elimination
 	_ = header[recordHeaderSize-1]
-	expectedChecksum := binary.LittleEndian.Uint32(header[:4])
-	keyLen := int64(header[headerKeyLenOff])
-	valueLen := int64(binary.LittleEndian.Uint16(header[headerValueLenOff : headerValueLenOff+2]))
+	expectedChecksum, keyLen, valueLen := readRecordHeader(header)
 
 	if uint64(recordHeaderSize+keyLen+valueLen) != recordLen {
 		return nil, nil, fmt.Errorf("keyLen %d + valueLen %d beyond bounds (%d)", keyLen, valueLen, recordLen)
@@ -130,7 +138,6 @@ type iter struct {
 	r *Reader
 
 	mu    sync.Mutex
-	f     *os.File
 	chans []struct {
 		cancel func()
 		ch     chan IterItem
@@ -186,15 +193,61 @@ func (i *iter) Next() (IterItem, bool) {
 	return item, true
 }
 
+type reader struct {
+	f   FileReader
+	off int64
+}
+
+func (r *reader) Read(p []byte) (n int, err error) {
+	n, err = r.f.ReadAt(p, r.off)
+	if n > 0 {
+		r.off += int64(n)
+	}
+	return
+}
+
+var _ io.Reader = &reader{}
+
 func (i *iter) producer(_ context.Context, ch chan<- IterItem) {
 	defer close(ch)
 
+	offsetReader := reader{
+		f:   i.r.f,
+		off: fileHeaderSize,
+	}
+	r := bufio.NewReaderSize(&offsetReader, defaultBufferSize)
+
 	off := int64(fileHeaderSize)
-	for {
-		k, v, err := i.r.ReadAt(NewPackedOffset(uint64(off), 0, 0))
+	for j := 0; int64(j) < i.Len(); j++ {
+		buf := make([]byte, recordHeaderSize)
+		n, err := r.Read(buf)
 		if err != nil {
-			return
+			// TODO: handle this more gracefully
+			panic(err)
 		}
+		if n != recordHeaderSize {
+			panic(fmt.Errorf("short read of %d bytes", n))
+		}
+
+		expectedChecksum, keyLen, valueLen := readRecordHeader(buf)
+		if keyLen == 0 {
+			panic("invariant broken: encountered 0 length key")
+		}
+		k := make([]byte, keyLen)
+		v := make([]byte, valueLen)
+
+		if n, err := io.ReadFull(r, k); int64(n) != keyLen || err != nil {
+			panic(err)
+		}
+		if n, err := io.ReadFull(r, v); int64(n) != valueLen || err != nil {
+			panic(err)
+		}
+
+		checksum := uint32(farm.Hash64(v))
+		if expectedChecksum != checksum {
+			panic(fmt.Errorf("off %d checksum failed (%d != %d): data file corrupted", off, expectedChecksum, checksum))
+		}
+
 		item := IterItem{
 			Key:    k,
 			Value:  v,

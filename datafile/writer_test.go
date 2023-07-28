@@ -44,6 +44,22 @@ func (s *safeBuffer) WriteAt(p []byte, off int64) (n int, err error) {
 	return copy(s.buf[off:int(off)+len(p)], p), nil
 }
 
+func (s *safeBuffer) ReadAt(p []byte, off int64) (n int, err error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	if int(off) > len(s.buf) {
+		return 0, errors.New("writeAt out of bounds")
+	}
+
+	end := int(off) + len(p)
+	if end > len(s.buf) {
+		end = len(s.buf)
+	}
+
+	return copy(p, s.buf[off:end]), nil
+}
+
 func (s *safeBuffer) Close() error {
 	return nil
 }
@@ -162,5 +178,49 @@ func TestWriter_Finish(t *testing.T) {
 	err = h.UnmarshalBytes([]byte(contents[:fileHeaderSize]))
 	require.NoError(t, err)
 	assert.Equal(t, uint64(1000), h.recordCount)
+}
 
+func TestWriter_RoundTrip(t *testing.T) {
+	var fileBytes safeBuffer
+
+	w, err := NewWriter(&fileBytes)
+	require.NoError(t, err)
+
+	for i := 0; i < 1000; i++ {
+		k := []byte(strconv.FormatInt(int64(i), 10))
+		v := make([]byte, maximumValueLength)
+		for j := 0; j < len(v); j++ {
+			v[j] = byte(i % 256)
+		}
+		_, err := w.Write(k, v)
+		require.NoError(t, err)
+	}
+
+	err = w.Finish()
+	require.NoError(t, err)
+
+	contents := fileBytes.String()
+	assert.Equal(t, 0, len(contents)%hugePageSize)
+	var h fileHeader
+	err = h.UnmarshalBytes([]byte(contents[:fileHeaderSize]))
+	require.NoError(t, err)
+	assert.Equal(t, uint64(1000), h.recordCount)
+
+	r, err := NewReader(&fileBytes)
+	require.NoError(t, err)
+	require.NotNil(t, r)
+
+	assert.Equal(t, int64(1000), r.Len())
+
+	i := 0
+	it := r.Iter()
+	for item := range it.Iter() {
+		assert.Equal(t, strconv.FormatInt(int64(i), 10), string(item.Key))
+		i++
+	}
+	require.Equal(t, 1000, i)
+
+	// should be safe for multiple closes
+	it.Close()
+	it.Close()
 }
