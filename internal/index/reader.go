@@ -16,26 +16,15 @@ import (
 	"golang.org/x/sys/unix"
 
 	"github.com/bpowers/bit/datafile"
-	"github.com/bpowers/bit/internal/exp/mmap"
 	"github.com/bpowers/bit/internal/unsafestring"
 )
 
 const (
-	magicIndexHeader = uint32(0xC0FFEE01)
-	fileHeaderSize   = 128
-	maxIndexEntries  = (1 << 31) - 1
-	maxUint32        = ^uint32(0)
+	maxIndexEntries = (1 << 31) - 1
+	maxUint32       = ^uint32(0)
 )
 
-type BuildType int
-
-const (
-	FastHighMem BuildType = iota
-)
-
-var (
-	errorDuplicateKey = errors.New("duplicate keys aren't supported")
-)
+var ErrDuplicateKey = errors.New("duplicate keys aren't supported")
 
 // nextPow2 returns the next highest power of two above a given number.
 func nextPow2(n int64) int64 {
@@ -58,7 +47,6 @@ func (s uint64Slice) Get(off uint64) uint64 {
 
 // Table is an index into a datafile, backed by an mmap'd file.
 type Table struct {
-	mm          *mmap.ReaderAt
 	seeds       uint32Slice
 	seedsMask   uint64
 	offsets     uint64Slice
@@ -66,22 +54,8 @@ type Table struct {
 }
 
 // NewTable returns a new `*index.Table` based on the on-disk table at `path`.
-func NewTable(path string) (*Table, error) {
-	mm, err := mmap.Open(path)
-	if err != nil {
-		return nil, fmt.Errorf("mmap.Open(%s): %e", path, err)
-	}
-
-	m := mm.Data()
-	fileMagic := binary.LittleEndian.Uint32(m[:4])
-	if fileMagic != magicIndexHeader {
-		return nil, fmt.Errorf("bad magic number on index file %s (%x) -- not bit index or corrupted", path, fileMagic)
-	}
-
-	fileFormatVersion := binary.LittleEndian.Uint32(m[4:8])
-	if fileFormatVersion != 2 {
-		return nil, fmt.Errorf("this version of the bit library can only read v1 data files; found v%d", fileFormatVersion)
-	}
+func NewTable(tbl Built) (*Table, error) {
+	m := tbl.Table
 
 	if err := unix.Madvise(m, syscall.MADV_RANDOM); err != nil {
 		return nil, fmt.Errorf("madvise: %s", err)
@@ -94,10 +68,10 @@ func NewTable(path string) (*Table, error) {
 		log.Printf("finished mlocking the index into memory\n")
 	}
 
-	level0Len := uint64(binary.LittleEndian.Uint32(m[12:16]))
-	level1Len := uint64(binary.LittleEndian.Uint32(m[16:20]))
+	level0Len := tbl.Level0Len
+	level1Len := tbl.Level1Len
 
-	rest := m[fileHeaderSize:]
+	rest := m
 	level1 := rest[:level1Len*8]
 	level0 := rest[level1Len*8 : level1Len*8+level0Len*4]
 
@@ -106,7 +80,6 @@ func NewTable(path string) (*Table, error) {
 	}
 
 	return &Table{
-		mm:          mm,
 		seeds:       level0,
 		seedsMask:   level0Len - 1,
 		offsets:     level1,

@@ -134,12 +134,11 @@ func testTable(t *testing.T, keys []string, extra []string) {
 	}
 	it := &testIter{items: entries}
 	defer it.Close()
-	f := tmpTestfile()
-	defer f.Close()
-	if err := Build(f, it, FastHighMem); err != nil {
+	tbl, err := Build(it)
+	if err != nil {
 		panic(err)
 	}
-	table, err := NewTable(f.Name())
+	table, err := NewTable(tbl)
 	if err != nil {
 		panic(err)
 	}
@@ -172,13 +171,15 @@ func BenchmarkMemoryBasedBuild(b *testing.B) {
 	if len(words) == 0 {
 		b.Skip("unable to load dictionary file")
 	}
-	f := tmpTestfile()
-	defer f.Close()
+	b.ResetTimer()
+	var tbl Built
 	for i := 0; i < b.N; i++ {
-		if err := Build(f, &testIter{items: words}, FastHighMem); err != nil {
+		var err error
+		if tbl, err = Build(&testIter{items: words}); err != nil {
 			panic(err)
 		}
 	}
+	_ = tbl
 }
 
 func BenchmarkTable(b *testing.B) {
@@ -248,17 +249,16 @@ func loadBenchTable() {
 		it := &testIter{items: words}
 		defer it.Close()
 		var err error
-		benchTable, err = newInMemoryBuilder(it)
+		benchTable, err = buildInMemory(it)
 		if err != nil {
 			panic(err)
 		}
 
-		f := tmpTestfile()
-		defer f.Close()
-		if err := benchTable.Write(f); err != nil {
+		tbl, err := benchTable.Write()
+		if err != nil {
 			panic(err)
 		}
-		benchFlatTable, err = NewTable(f.Name())
+		benchFlatTable, err = NewTable(tbl)
 		if err != nil {
 			panic(err)
 		}
