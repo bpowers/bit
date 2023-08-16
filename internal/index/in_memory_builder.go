@@ -190,7 +190,7 @@ func (t *inMemoryBuilder) Write() (Built, error) {
 		}
 	}
 
-	tbl.Table = []byte(buf.String())
+	tbl.Table = buf.Bytes()
 
 	return tbl, nil
 }
