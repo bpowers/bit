@@ -15,7 +15,7 @@ import (
 	"github.com/dgryski/go-farm"
 	"golang.org/x/sys/unix"
 
-	"github.com/bpowers/bit/datafile"
+	"github.com/bpowers/bit/internal/datafile"
 	"github.com/bpowers/bit/internal/unsafestring"
 )
 

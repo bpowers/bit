@@ -15,7 +15,7 @@ import (
 
 	"github.com/stretchr/testify/require"
 
-	"github.com/bpowers/bit/datafile"
+	"github.com/bpowers/bit/internal/datafile"
 )
 
 type testEntry struct {

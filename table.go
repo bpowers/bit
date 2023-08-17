@@ -14,8 +14,8 @@ import (
 	"os"
 	"path/filepath"
 
-	"github.com/bpowers/bit/datafile"
-	indexfile "github.com/bpowers/bit/internal/index"
+	"github.com/bpowers/bit/internal/datafile"
+	"github.com/bpowers/bit/internal/index"
 )
 
 // Builder is used to construct a big immutable table from key/value pairs.
@@ -107,7 +107,7 @@ func appendIndexFor(f *os.File, dioWriter *datafile.Writer) error {
 
 	it := r.Iter()
 	defer it.Close()
-	if built, err := indexfile.Build(it); err != nil {
+	if built, err := index.Build(it); err != nil {
 		_ = f.Close()
 		_ = os.Remove(f.Name())
 		return fmt.Errorf("idx.Build: %w", err)
@@ -133,7 +133,7 @@ func appendIndexFor(f *os.File, dioWriter *datafile.Writer) error {
 // matches one we stored at table build time.
 type Table struct {
 	data *datafile.MmapReader
-	idx  *indexfile.Table
+	idx  *index.Table
 }
 
 // New opens a bit table for reading, returning an error if things go wrong.
@@ -145,7 +145,7 @@ func New(dataPath string) (*Table, error) {
 
 	level0Count, level1Count, indexBytes := r.Index()
 
-	idx, err := indexfile.NewTable(indexfile.Built{
+	idx, err := index.NewTable(index.Built{
 		Level0Len: level0Count,
 		Level1Len: level1Count,
 		Table:     indexBytes,
