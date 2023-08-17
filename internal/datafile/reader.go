@@ -8,7 +8,9 @@ import (
 	"encoding/binary"
 	"fmt"
 	"io"
+	"os"
 	"sync"
+	"sync/atomic"
 	"syscall"
 
 	"github.com/dgryski/go-farm"
@@ -33,11 +35,6 @@ func (po PackedOffset) Unpack() (off int64, recordLen uint64) {
 	return off, recordHeaderSize + keyLen + valueLen
 }
 
-type FileReader interface {
-	io.ReaderAt
-	io.Closer
-}
-
 type MmapReader struct {
 	h    fileHeader
 	mmap *mmap.ReaderAt
@@ -46,7 +43,7 @@ type MmapReader struct {
 func NewMMapReaderWithPath(path string) (*MmapReader, error) {
 	m, err := mmap.Open(path)
 	if err != nil {
-		return nil, fmt.Errorf("mmap.Open(%s): %e", path, err)
+		return nil, fmt.Errorf("mmap.Open(%s): %w", path, err)
 	}
 
 	if m.Len() < fileHeaderSize {
@@ -181,8 +178,91 @@ func (i *iter) Len() int64 {
 	return i.r.Len()
 }
 
-func (i *iter) ReadAt(off PackedOffset) (key []byte, value []byte, err error) {
+func (i *iter) ReadAt(off PackedOffset) (key, value []byte, err error) {
 	return i.r.ReadAt(off)
+}
+
+type OsFileReader struct {
+	h        fileHeader
+	f        *os.File
+	isClosed atomic.Bool
+}
+
+func NewOsFileReader(path string) (*OsFileReader, error) {
+	f, err := os.Open(path)
+	if err != nil {
+		return nil, fmt.Errorf("os.Open(%s): %w", path, err)
+	}
+
+	stats, err := f.Stat()
+	if err != nil {
+		return nil, fmt.Errorf("f.Stat: %w", err)
+	}
+	if stats.Size() < fileHeaderSize {
+		return nil, fmt.Errorf("data file too short: %d < %d", stats.Size(), fileHeaderSize)
+	}
+
+	data := make([]byte, fileHeaderSize)
+	_, err = io.ReadFull(f, data)
+	if err != nil {
+		return nil, fmt.Errorf("io.ReadFull: %w", err)
+	}
+
+	var header fileHeader
+	if err := header.UnmarshalBytes(data); err != nil {
+		return nil, fmt.Errorf("fileHeader.UnmarshalBytes: %w", err)
+	}
+
+	r := &OsFileReader{
+		h: header,
+		f: f,
+	}
+	return r, nil
+}
+
+func (r *OsFileReader) ReadAt(poff PackedOffset) (key, value []byte, err error) {
+	off, rLen := poff.Unpack()
+	// an offset of 0 is never valid -- offsets are absolute from the
+	// start of the datafile, and datafiles _always_ have a 128-byte
+	// header.  This doesn't indicate corruption -- if someone looks
+	// up a non-existent key they could find a 0 in the index.
+	if off == 0 {
+		return nil, nil, InvalidOffset
+	}
+
+	// avoid an allocation for reasonably-sized records
+	buf := make([]byte, rLen)
+	mLen := len(buf)
+
+	n, err := r.f.ReadAt(buf, off)
+	if err != nil {
+		return nil, nil, fmt.Errorf("f.ReadAt(%d, len: %d): %w", off, rLen, err)
+	} else if n != int(rLen) {
+		return nil, nil, fmt.Errorf("short read of %d ReadAt(%d, len: %d)", n, off, rLen)
+	}
+
+	header := buf[:recordHeaderSize]
+	// bounds check elimination
+	_ = header[recordHeaderSize-1]
+	expectedChecksum, keyLen, valueLen := readRecordHeader(header[:recordHeaderSize])
+
+	if recordHeaderSize+valueLen+keyLen > int64(mLen) {
+		return nil, nil, fmt.Errorf("off %d + keyLen %d + valueLen %d beyond bounds (%d)", off, keyLen, valueLen, mLen)
+	}
+	key = buf[recordHeaderSize : recordHeaderSize+keyLen]
+	value = buf[recordHeaderSize+keyLen : recordHeaderSize+keyLen+valueLen]
+	checksum := uint32(farm.Hash64(value))
+	if expectedChecksum != checksum {
+		return nil, nil, fmt.Errorf("off %d checksum failed (%d != %d): data file corrupted", off, expectedChecksum, checksum)
+	}
+	return key, value, nil
+}
+
+func (r *OsFileReader) Close() error {
+	if r.isClosed.Swap(true) {
+		return nil
+	}
+	return r.f.Close()
 }
 
 /*

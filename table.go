@@ -132,15 +132,20 @@ func appendIndexFor(f *os.File, dioWriter *datafile.Writer) error {
 // that (a) keys passed to Get exactly match the key in the entry, and (b) the value's checksum
 // matches one we stored at table build time.
 type Table struct {
-	data *datafile.MmapReader
-	idx  *index.Table
+	data     *datafile.MmapReader
+	slowData *datafile.OsFileReader
+	idx      *index.Table
 }
 
 // New opens a bit table for reading, returning an error if things go wrong.
 func New(dataPath string) (*Table, error) {
 	r, err := datafile.NewMMapReaderWithPath(dataPath)
 	if err != nil {
-		return nil, fmt.Errorf("datafile.NewMMapReaderAtPath(%s): %e", dataPath, err)
+		return nil, fmt.Errorf("datafile.NewMMapReaderAtPath(%s): %w", dataPath, err)
+	}
+	sr, err := datafile.NewOsFileReader(dataPath)
+	if err != nil {
+		return nil, fmt.Errorf("datafile.NewOsFileReader(%s): %w", dataPath, err)
 	}
 
 	level0Count, level1Count, indexBytes := r.Index()
@@ -154,8 +159,9 @@ func New(dataPath string) (*Table, error) {
 		return nil, fmt.Errorf("index.NewTable: %e", err)
 	}
 	return &Table{
-		data: r,
-		idx:  idx,
+		data:     r,
+		slowData: sr,
+		idx:      idx,
 	}, nil
 }
 
@@ -163,7 +169,7 @@ func New(dataPath string) (*Table, error) {
 // The value is a []byte, but MUST NOT be written to.
 func (t *Table) GetString(key string) ([]byte, bool) {
 	off := t.idx.MaybeLookupString(key)
-	expectedKey, value, err := t.data.ReadAt(off)
+	expectedKey, value, err := t.slowData.ReadAt(off)
 	if err != nil {
 		if errors.Is(err, datafile.InvalidOffset) {
 			// TODO: remove this before deploying to prod probably
@@ -183,7 +189,7 @@ func (t *Table) GetString(key string) ([]byte, bool) {
 // The value is a []byte, but MUST NOT be written to.
 func (t *Table) Get(key []byte) ([]byte, bool) {
 	off := t.idx.MaybeLookup(key)
-	expectedKey, value, err := t.data.ReadAt(off)
+	expectedKey, value, err := t.slowData.ReadAt(off)
 	if err != nil {
 		if errors.Is(err, datafile.InvalidOffset) {
 			// TODO: remove this before deploying to prod probably
