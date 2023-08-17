@@ -111,6 +111,9 @@ func testFile(t testing.TB, path string) {
 		v, ok := table.GetString(k)
 		require.True(t, ok)
 		require.Equal(t, expected, string(v))
+		v, ok = table.Get([]byte(k))
+		require.True(t, ok)
+		require.Equal(t, expected, string(v))
 	}
 
 	for _, negative := range []string{
@@ -118,6 +121,9 @@ func testFile(t testing.TB, path string) {
 	} {
 		// we shouldn't find keys that don't exist
 		v, ok := table.GetString(negative)
+		require.False(t, ok)
+		require.Nil(t, v)
+		v, ok = table.Get([]byte(negative))
 		require.False(t, ok)
 		require.Nil(t, v)
 	}
