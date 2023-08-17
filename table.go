@@ -67,14 +67,19 @@ func (b *Builder) Put(k, v []byte) error {
 }
 
 func (b *Builder) Finalize() (*Table, error) {
-	return b.finalize(indexfile.FastHighMem)
+	return b.finalize()
 }
 
 // Finalize flushes the table to disk and builds an index to efficiently randomly access entries.
-func (b *Builder) finalize(indexBuildType indexfile.BuildType) (*Table, error) {
+func (b *Builder) finalize() (*Table, error) {
 	if err := b.dioWriter.Finish(); err != nil {
 		return nil, fmt.Errorf("recordio.Close: %w", err)
 	}
+
+	if err := appendIndexFor(b.dataFile, b.dioWriter); err != nil {
+		return nil, fmt.Errorf("appendIndexFor: %w\n", err)
+	}
+
 	// make the file read-only
 	if err := os.Chmod(b.dataFile.Name(), 0444); err != nil {
 		return nil, fmt.Errorf("os.Chmod(0444): %w", err)
@@ -86,51 +91,35 @@ func (b *Builder) finalize(indexBuildType indexfile.BuildType) (*Table, error) {
 	if err := os.Chmod(b.resultPath, 0444); err != nil {
 		return nil, fmt.Errorf("os.Chmod(0444): %w", err)
 	}
+	_ = b.dataFile.Close()
 	b.dataFile = nil
 	dataPath := b.resultPath
-
-	if err := buildIndexFor(dataPath, indexBuildType); err != nil {
-		return nil, fmt.Errorf("buildIndexFor: %w\n", err)
-	}
 
 	return New(dataPath)
 }
 
-func buildIndexFor(dataPath string, indexBuildType indexfile.BuildType) error {
+func appendIndexFor(f *os.File, dioWriter *datafile.Writer) error {
+	dataPath := f.Name()
 	r, err := datafile.NewMMapReaderWithPath(dataPath)
 	if err != nil {
 		return fmt.Errorf("datafile.NewMMapReaderAtPath(%s): %w", dataPath, err)
 	}
 
-	finalIndexPath := dataPath + ".index"
-	f, err := os.CreateTemp(filepath.Dir(dataPath), "bit-builder.*.index")
-	if err != nil {
-		return fmt.Errorf("os.CreateTemp(%q): %w", dataPath, err)
-	}
-
 	it := r.Iter()
 	defer it.Close()
-	if err := indexfile.Build(f, it, indexBuildType); err != nil {
+	if built, err := indexfile.Build(it); err != nil {
 		_ = f.Close()
 		_ = os.Remove(f.Name())
-		return fmt.Errorf("idx.Write: %e", err)
-	}
-
-	if err = f.Sync(); err != nil {
-		return err
-	}
-	if err = f.Close(); err != nil {
-		return err
-	}
-
-	if err = os.Chmod(f.Name(), 0444); err != nil {
-		return fmt.Errorf("os.Chmod(0444): %e", err)
-	}
-	if err = os.Rename(f.Name(), finalIndexPath); err != nil {
-		return fmt.Errorf("os.Rename: %e", err)
-	}
-	if err = os.Chmod(finalIndexPath, 0444); err != nil {
-		return fmt.Errorf("os.Chmod(0444): %e", err)
+		return fmt.Errorf("idx.Build: %w", err)
+	} else {
+		if err := dioWriter.SetIndexMetadata(built.Level0Len, built.Level1Len); err != nil {
+			return fmt.Errorf("dioWriter.SetIndexMetadata: %w", err)
+		}
+		if n, err := f.Write(built.Table); err != nil {
+			return fmt.Errorf("idx.Write: %w", err)
+		} else if n != len(built.Table) {
+			return fmt.Errorf("idx.Write: short write of %d (wanted %d)", n, len(built.Table))
+		}
 	}
 
 	return nil
@@ -153,7 +142,14 @@ func New(dataPath string) (*Table, error) {
 	if err != nil {
 		return nil, fmt.Errorf("datafile.NewMMapReaderAtPath(%s): %e", dataPath, err)
 	}
-	idx, err := indexfile.NewTable(dataPath + ".index")
+
+	level0Count, level1Count, indexBytes := r.Index()
+
+	idx, err := indexfile.NewTable(indexfile.Built{
+		Level0Len: level0Count,
+		Level1Len: level1Count,
+		Table:     indexBytes,
+	})
 	if err != nil {
 		return nil, fmt.Errorf("index.NewTable: %e", err)
 	}
@@ -169,7 +165,7 @@ func (t *Table) GetString(key string) ([]byte, bool) {
 	off := t.idx.MaybeLookupString(key)
 	expectedKey, value, err := t.data.ReadAt(off)
 	if err != nil {
-		if err != datafile.InvalidOffset {
+		if errors.Is(err, datafile.InvalidOffset) {
 			// TODO: remove this before deploying to prod probably
 			log.Printf("bit.Table.GetString(%q): %s\n", key, err)
 		}
@@ -189,7 +185,7 @@ func (t *Table) Get(key []byte) ([]byte, bool) {
 	off := t.idx.MaybeLookup(key)
 	expectedKey, value, err := t.data.ReadAt(off)
 	if err != nil {
-		if err != datafile.InvalidOffset {
+		if errors.Is(err, datafile.InvalidOffset) {
 			// TODO: remove this before deploying to prod probably
 			log.Printf("bit.Table.Get(%q): %s\n", key, err)
 		}

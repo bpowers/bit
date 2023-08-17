@@ -67,7 +67,6 @@ func openTestFile(path string) (*Table, map[string]string, error) {
 	}
 	defer func() {
 		_ = os.Remove(dataFile.Name())
-		_ = os.Remove(dataFile.Name() + ".index")
 	}()
 	if err = dataFile.Close(); err != nil {
 		return nil, nil, err

@@ -79,6 +79,14 @@ func NewWriter(f FileWriter) (*Writer, error) {
 	return w, nil
 }
 
+func (w *Writer) SetIndexMetadata(level0Len, level1Len uint64) error {
+	if err := w.h.UpdateIndex(w.off, level0Len, level1Len, w.f); err != nil {
+		return fmt.Errorf("h.UpdateIndex: %w", err)
+	}
+
+	return nil
+}
+
 func (w *Writer) writeRecordHeader(key, value []byte) (int, error) {
 	if len(key) == 0 {
 		return 0, fmt.Errorf("empty key not supported")
@@ -139,13 +147,13 @@ func (w *Writer) Finish() error {
 	defer func() {
 		w.w.Reset(&nopWriter{})
 		w.w = nil
-		w.f = nil
 	}()
 
 	// pad up so the header + data portion of our file is a multiple of 2MB
 	if w.off%hugePageSize != 0 {
 		zeroes := make([]byte, hugePageSize-(w.off%hugePageSize))
 		_, _ = w.w.Write(zeroes)
+		w.off += uint64(len(zeroes))
 	}
 
 	if err := w.w.Flush(); err != nil {

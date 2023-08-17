@@ -70,6 +70,10 @@ func NewMMapReaderWithPath(path string) (*MmapReader, error) {
 	return r, nil
 }
 
+func (r *MmapReader) Index() (level0Count, levellCount uint64, indexBytes []byte) {
+	return r.h.indexLevel0Count, r.h.indexLevel1Count, r.mmap.Data()[r.h.indexStart:]
+}
+
 func (r *MmapReader) Len() int64 {
 	return int64(r.h.recordCount)
 }
