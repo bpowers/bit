@@ -19,6 +19,19 @@ import (
 	"github.com/bpowers/bit/internal/unsafestring"
 )
 
+var errNoSeedFound = errors.New("couldn't find 32-bit seed")
+
+type set[T ~string] map[T]struct{}
+
+func (s set[T]) Add(k T) {
+	s[k] = struct{}{}
+}
+
+func (s set[T]) ContainsBytes(k []byte) bool {
+	_, ok := s[T(k)]
+	return ok
+}
+
 type Built struct {
 	Table     []byte
 	Level0Len uint64
@@ -80,23 +93,37 @@ func buildInMemory(it datafile.Iter) (*inMemoryBuilder, error) {
 	)
 
 	var (
-		offsets       = make([]datafile.PackedOffset, entryLen)
-		level0        = make([]uint32, level0Len)
-		level1        = make([]datafile.PackedOffset, level1Len)
+		offsets = make([]datafile.PackedOffset, entryLen)
+		level0  = make([]uint32, level0Len)
+		// level1 is allocated below, to reduce our required max RSS
 		sparseBuckets = make([][]uint32, level0Len)
 	)
+
+	// maintain a set of keys to check for duplicates - this is memory expensive,
+	// so only do it if asked.
+	keys := make(set[string], entryLen)
 
 	log.Printf("building sparse buckets\n")
 
 	{
 		i := 0
 		for e, ok := it.Next(); ok; e, ok = it.Next() {
+			if keys != nil {
+				if keys.ContainsBytes(e.Key) {
+					return nil, fmt.Errorf("duplicate key: %q", e.Key)
+				} else {
+					keys.Add(string(e.Key))
+				}
+			}
 			n := farm.Hash64WithSeed(e.Key, 0) & level0Mask
 			sparseBuckets[n] = append(sparseBuckets[n], uint32(i))
 			offsets[i] = e.PackedOffset()
 			i++
 		}
 	}
+
+	// done with keys, so we can free them here
+	keys = nil
 
 	log.Printf("collating sparse buckets\n")
 
@@ -107,9 +134,14 @@ func buildInMemory(it datafile.Iter) (*inMemoryBuilder, error) {
 		}
 	}
 
+	// done with sparseBuckets, so free it too
+	sparseBuckets = nil
+
 	log.Printf("sorting sparse buckets\n")
 	sort.Sort(bySize(buckets))
 	log.Printf("done sorting sparse buckets\n")
+
+	level1 := make([]datafile.PackedOffset, level1Len)
 
 	log.Printf("iterating over %d buckets\n", len(buckets))
 	occ := bitset.New(int64(len(level1)))
@@ -121,7 +153,7 @@ func buildInMemory(it datafile.Iter) (*inMemoryBuilder, error) {
 		seed := uint64(1)
 	trySeed:
 		if seed >= uint64(maxUint32) {
-			return nil, errors.New("couldn't find 32-bit seed")
+			return nil, errNoSeedFound
 		}
 		tmpOcc = tmpOcc[:0]
 		for _, i := range bucket.Values {

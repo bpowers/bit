@@ -13,6 +13,7 @@ import (
 	"sync"
 	"testing"
 
+	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
 	"github.com/bpowers/bit/internal/datafile"
@@ -96,6 +97,8 @@ func (i *testIter) ReadAt(poff datafile.PackedOffset) (key []byte, value []byte,
 }
 
 func TestNextPow2(t *testing.T) {
+	t.Parallel()
+
 	for _, testcase := range []struct {
 		input    int64
 		expected int64
@@ -110,11 +113,31 @@ func TestNextPow2(t *testing.T) {
 	}
 }
 
+func TestCatchDuplicateKeys(t *testing.T) {
+	t.Parallel()
+
+	keys := []string{"a", "b", "c", "c"}
+
+	entries := make([]testEntry, len(keys))
+	for i, key := range keys {
+		entries[i] = testEntry{Key: key, Offset: uint64(i)}
+	}
+	it := &testIter{items: entries}
+	defer it.Close()
+	_, err := Build(it)
+	require.Error(t, err)
+	assert.Equal(t, `duplicate key: "c"`, err.Error())
+}
+
 func TestBuild_simple(t *testing.T) {
+	t.Parallel()
+
 	testTable(t, []string{"foo", "foo2", "bar", "baz"}, []string{"quux"})
 }
 
 func TestBuild_stress(t *testing.T) {
+	t.Parallel()
+
 	var keys, extra []string
 	for i := 0; i < 20000; i++ {
 		s := strconv.Itoa(i)
@@ -157,14 +180,6 @@ var (
 	benchTable     *inMemoryBuilder
 	benchFlatTable *Table
 )
-
-func tmpTestfile() *os.File {
-	f, err := os.CreateTemp("", "bit-test.*.index")
-	if err != nil {
-		panic(err)
-	}
-	return f
-}
 
 func BenchmarkMemoryBasedBuild(b *testing.B) {
 	wordsOnce.Do(loadBenchTable)
@@ -270,7 +285,7 @@ func loadDict(dict string) ([]testEntry, error) {
 	if err != nil {
 		return nil, err
 	}
-	defer f.Close()
+	defer func() { _ = f.Close() }()
 	scanner := bufio.NewScanner(f)
 	var words []testEntry
 	i := uint64(0)
