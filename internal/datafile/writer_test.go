@@ -108,7 +108,7 @@ func TestWriter_TooBigErrors(t *testing.T) {
 	var k, v []byte
 
 	// key too big should be an error
-	k = make([]byte, maximumKeyLength+1)
+	k = make([]byte, MaxKeyLen+1)
 	v = make([]byte, 1)
 	_, err = w.Write(k, v)
 	assert.Error(t, err)
@@ -121,7 +121,7 @@ func TestWriter_TooBigErrors(t *testing.T) {
 
 	// value too big should be an error
 	k = make([]byte, 1)
-	v = make([]byte, maximumValueLength+1)
+	v = make([]byte, maxValueLen+1)
 	_, err = w.Write(k, v)
 	assert.Error(t, err)
 
@@ -138,7 +138,7 @@ func TestWriter_TooBigErrors(t *testing.T) {
 		_, err := w.Write([]byte("k"), []byte("v"))
 		assert.Error(t, err)
 
-		w.off = maximumOffset + 1
+		w.off = maxOffset + 1
 		_, err = w.Write([]byte("k"), []byte("v"))
 		assert.Error(t, err)
 
@@ -162,7 +162,7 @@ func TestWriter_Finish(t *testing.T) {
 
 	for i := 0; i < 1000; i++ {
 		k := []byte(strconv.FormatInt(int64(i), 10))
-		v := make([]byte, maximumValueLength)
+		v := make([]byte, maxValueLen)
 		for j := 0; j < len(v); j++ {
 			v[j] = byte(i % 256)
 		}
@@ -189,7 +189,7 @@ func TestWriter_RoundTrip(t *testing.T) {
 
 	for i := 0; i < 1000; i++ {
 		k := []byte(strconv.FormatInt(int64(i), 10))
-		v := make([]byte, maximumValueLength)
+		v := make([]byte, maxValueLen)
 		for j := 0; j < len(v); j++ {
 			v[j] = byte(i % 256)
 		}

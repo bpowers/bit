@@ -127,7 +127,7 @@ type IterItem struct {
 }
 
 func (ii IterItem) PackedOffset() PackedOffset {
-	if ii.Offset < 0 || len(ii.Key) > maximumKeyLength || len(ii.Value) > maximumValueLength {
+	if ii.Offset < 0 || len(ii.Key) > MaxKeyLen || len(ii.Value) > maxValueLen {
 		panic("PackedOffset invariants broken!")
 	}
 	return NewPackedOffset(uint64(ii.Offset), uint8(len(ii.Key)), uint16(len(ii.Value)))

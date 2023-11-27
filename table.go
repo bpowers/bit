@@ -56,7 +56,7 @@ func NewBuilder(dataFilePath string) (*Builder, error) {
 // Put adds a key/value pair to the table.  Duplicate keys result in an error at Finalize time.
 func (b *Builder) Put(k, v []byte) error {
 	kLen := len(k)
-	if kLen >= 256 {
+	if kLen > datafile.MaxKeyLen {
 		return errorKeyTooBig
 	}
 	_, err := b.dioWriter.Write(k, v)

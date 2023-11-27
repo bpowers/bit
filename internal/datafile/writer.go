@@ -19,9 +19,9 @@ const (
 	defaultBufferSize = 4 * 1024 * 1024
 	recordHeaderSize  = 4 + 1 + 2 // 32-bit checksum of the value + 8-bit key length + 16-bit value length
 
-	maximumOffset      = (1 << 40) - 1
-	maximumKeyLength   = (1 << 8) - 1
-	maximumValueLength = (1 << 16) - 1
+	maxOffset   = (1 << 40) - 1
+	MaxKeyLen   = (1 << 8) - 1
+	maxValueLen = (1 << 16) - 1
 
 	headerKeyLenOff   = 4
 	headerValueLenOff = 5
@@ -91,10 +91,10 @@ func (w *Writer) writeRecordHeader(key, value []byte) (int, error) {
 	if len(key) == 0 {
 		return 0, fmt.Errorf("empty key not supported")
 	}
-	if len(key) > maximumKeyLength {
+	if len(key) > MaxKeyLen {
 		return 0, fmt.Errorf("key %q too long", string(key))
 	}
-	if len(value) > maximumValueLength {
+	if len(value) > maxValueLen {
 		return 0, fmt.Errorf("value %q too long", string(value))
 	}
 
@@ -114,7 +114,7 @@ func (w *Writer) Write(key, value []byte) (off uint64, err error) {
 		return 0, errors.New("invariant broken: always expect *Writer.off to be > 0")
 	}
 
-	if off > maximumOffset {
+	if off > maxOffset {
 		return 0, errors.New("data file has grown too large (>262 petabytes)")
 	}
 
