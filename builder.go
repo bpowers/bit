@@ -62,36 +62,35 @@ func (b *Builder) Put(k, v []byte) error {
 	return nil
 }
 
-func (b *Builder) Finalize() (*Table, error) {
+func (b *Builder) Finalize() error {
 	return b.finalize()
 }
 
 // Finalize flushes the table to disk and builds an index to efficiently randomly access entries.
-func (b *Builder) finalize() (*Table, error) {
+func (b *Builder) finalize() error {
 	if err := b.dioWriter.Finish(); err != nil {
-		return nil, fmt.Errorf("recordio.Close: %w", err)
+		return fmt.Errorf("recordio.Close: %w", err)
 	}
 
 	if err := appendIndexFor(b.dataFile, b.dioWriter); err != nil {
-		return nil, fmt.Errorf("appendIndexFor: %w\n", err)
+		return fmt.Errorf("appendIndexFor: %w\n", err)
 	}
 
 	// make the file read-only
 	if err := os.Chmod(b.dataFile.Name(), 0444); err != nil {
-		return nil, fmt.Errorf("os.Chmod(0444): %w", err)
+		return fmt.Errorf("os.Chmod(0444): %w", err)
 	}
 	if err := os.Rename(b.dataFile.Name(), b.resultPath); err != nil {
-		return nil, fmt.Errorf("os.Rename: %w", err)
+		return fmt.Errorf("os.Rename: %w", err)
 	}
 	// make the file read-only
 	if err := os.Chmod(b.resultPath, 0444); err != nil {
-		return nil, fmt.Errorf("os.Chmod(0444): %w", err)
+		return fmt.Errorf("os.Chmod(0444): %w", err)
 	}
 	_ = b.dataFile.Close()
 	b.dataFile = nil
-	dataPath := b.resultPath
 
-	return New(dataPath)
+	return nil
 }
 
 func appendIndexFor(f *os.File, dioWriter *datafile.Writer) error {

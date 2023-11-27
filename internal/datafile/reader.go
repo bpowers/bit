@@ -185,6 +185,7 @@ func (i *iter) ReadAt(off PackedOffset) (key, value []byte, err error) {
 type OsFileReader struct {
 	h        fileHeader
 	f        *os.File
+	size     int64
 	isClosed atomic.Bool
 }
 
@@ -214,10 +215,37 @@ func NewOsFileReader(path string) (*OsFileReader, error) {
 	}
 
 	r := &OsFileReader{
-		h: header,
-		f: f,
+		h:    header,
+		f:    f,
+		size: stats.Size(),
 	}
 	return r, nil
+}
+
+// Index will return index metadata and the index bytes on-heap (not mmap'ed).
+func (r *OsFileReader) Index() (level0Count, levellCount uint64, indexBytes []byte, err error) {
+	defer func() {
+		// seek back to where we were, no matter what and ignoring errors
+		_, _ = r.f.Seek(fileHeaderSize, io.SeekStart)
+	}()
+
+	indexLen := r.size - int64(r.h.indexStart)
+	if indexLen <= 0 {
+		err = fmt.Errorf("couldn't read index at offset %d in file of length %d", r.h.indexStart, r.size)
+		return
+
+	}
+
+	if _, err = r.f.Seek(int64(r.h.indexStart), io.SeekStart); err != nil {
+		return
+	}
+
+	indexBytes = make([]byte, indexLen)
+	if _, err = io.ReadFull(r.f, indexBytes); err != nil {
+		return
+	}
+
+	return r.h.indexLevel0Count, r.h.indexLevel1Count, indexBytes, nil
 }
 
 func (r *OsFileReader) ReadAt(poff PackedOffset) (key, value []byte, err error) {

@@ -16,6 +16,7 @@ import (
 
 var (
 	benchTable     *Table
+	benchTableMmap *Table
 	benchTableOnce sync.Once
 	benchHashmap   map[string]string
 	benchEntries   []benchEntry
@@ -36,6 +37,10 @@ func loadBenchTable() {
 	if err != nil {
 		panic(err)
 	}
+	benchTableMmap, expected, err = openTestFile("testdata.large", WithMMap(true))
+	if err != nil {
+		panic(err)
+	}
 
 	for k, v := range expected {
 		benchEntries = append(benchEntries, benchEntry{Key: k, Value: v})
@@ -52,7 +57,7 @@ func loadBenchTable() {
 	}
 }
 
-func openTestFile(path string) (*Table, map[string]string, error) {
+func openTestFile(path string, opts ...Option) (*Table, map[string]string, error) {
 	f, err := os.Open(path)
 	if err != nil {
 		return nil, nil, err
@@ -96,15 +101,20 @@ func openTestFile(path string) (*Table, map[string]string, error) {
 		known[string(k)] = string(v)
 	}
 
-	table, err := builder.Finalize()
+	if err := builder.Finalize(); err != nil {
+		return nil, nil, err
+	}
+
+	table, err := New(dataFile.Name(), opts...)
 	if err != nil {
 		return nil, nil, err
 	}
+
 	return table, known, nil
 }
 
-func testFile(t testing.TB, path string) {
-	table, known, err := openTestFile(path)
+func testFile(t testing.TB, path string, opts ...Option) {
+	table, known, err := openTestFile(path, opts...)
 	require.NoError(t, err)
 
 	for k, expected := range known {
@@ -133,6 +143,10 @@ func TestTableSmall(t *testing.T) {
 	testFile(t, "testdata.small")
 }
 
+func TestTableSmallWithMmap(t *testing.T) {
+	testFile(t, "testdata.small", WithMMap(true))
+}
+
 func TestTableLarge(t *testing.T) {
 	dataFile := "testdata.large"
 	if _, err := os.Stat(dataFile); err != nil {
@@ -151,6 +165,21 @@ func BenchmarkTable(b *testing.B) {
 		j := i % len(benchEntries)
 		entry := benchEntries[j]
 		value, ok := benchTable.GetString(entry.Key)
+		if !ok || string(value) != entry.Value {
+			b.Fatal("bad data or lookup")
+		}
+	}
+}
+
+func BenchmarkTableWithMMap(b *testing.B) {
+	benchTableOnce.Do(loadBenchTable)
+
+	b.ReportAllocs()
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		j := i % len(benchEntries)
+		entry := benchEntries[j]
+		value, ok := benchTableMmap.GetString(entry.Key)
 		if !ok || string(value) != entry.Value {
 			b.Fatal("bad data or lookup")
 		}
