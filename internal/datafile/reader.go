@@ -13,7 +13,7 @@ import (
 	"sync/atomic"
 	"syscall"
 
-	"github.com/dgryski/go-farm"
+	"github.com/orisano/wyhash"
 	"golang.org/x/sys/unix"
 
 	"github.com/bpowers/bit/internal/exp/mmap"
@@ -109,7 +109,7 @@ func (r *MmapReader) ReadAt(poff PackedOffset) (key, value []byte, err error) {
 	}
 	key = m[off+recordHeaderSize : off+recordHeaderSize+keyLen]
 	value = m[off+recordHeaderSize+keyLen : off+recordHeaderSize+keyLen+valueLen]
-	checksum := uint32(farm.Hash64(value))
+	checksum := uint32(wyhash.Sum64(0, value))
 	if expectedChecksum != checksum {
 		return nil, nil, fmt.Errorf("off %d checksum failed (%d != %d): data file corrupted", off, expectedChecksum, checksum)
 	}
@@ -279,7 +279,7 @@ func (r *OsFileReader) ReadAt(poff PackedOffset) (key, value []byte, err error) 
 	}
 	key = buf[recordHeaderSize : recordHeaderSize+keyLen]
 	value = buf[recordHeaderSize+keyLen : recordHeaderSize+keyLen+valueLen]
-	checksum := uint32(farm.Hash64(value))
+	checksum := uint32(wyhash.Sum64(0, value))
 	if expectedChecksum != checksum {
 		return nil, nil, fmt.Errorf("off %d checksum failed (%d != %d): data file corrupted", off, expectedChecksum, checksum)
 	}
@@ -345,7 +345,7 @@ func (i *iter) producer(_ context.Context, ch chan<- IterItem) {
 			panic(err)
 		}
 
-		checksum := uint32(farm.Hash64(v))
+		checksum := uint32(wyhash.Sum64(0, v))
 		if expectedChecksum != checksum {
 			panic(fmt.Errorf("off %d checksum failed (%d != %d): data file corrupted", off, expectedChecksum, checksum))
 		}

@@ -3,7 +3,7 @@ module github.com/bpowers/bit
 go 1.19
 
 require (
-	github.com/dgryski/go-farm v0.0.0-20200201041132-a6ae2369ad13
+	github.com/orisano/wyhash v1.1.0
 	github.com/stretchr/testify v1.7.0
 	golang.org/x/sys v0.0.0-20220928140112-f11e5e49a4ec
 )
