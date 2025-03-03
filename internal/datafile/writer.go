@@ -12,7 +12,7 @@ import (
 	"io"
 	"sync/atomic"
 
-	"github.com/orisano/wyhash"
+	"github.com/dgryski/go-farm"
 )
 
 const (
@@ -100,7 +100,7 @@ func (w *Writer) writeRecordHeader(key, value []byte) (int, error) {
 
 	var header [recordHeaderSize]byte
 
-	checksum := uint32(wyhash.Sum64(0, value))
+	checksum := uint32(farm.Hash64(value))
 	binary.LittleEndian.PutUint32(header[:4], checksum)
 	header[headerKeyLenOff] = uint8(len(key))
 	binary.LittleEndian.PutUint16(header[headerValueLenOff:headerValueLenOff+2], uint16(len(value)))

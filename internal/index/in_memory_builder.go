@@ -12,7 +12,7 @@ import (
 	"log"
 	"sort"
 
-	"github.com/orisano/wyhash"
+	"github.com/dgryski/go-farm"
 
 	"github.com/bpowers/bit/internal/bitset"
 	"github.com/bpowers/bit/internal/datafile"
@@ -115,7 +115,7 @@ func buildInMemory(it datafile.Iter) (*inMemoryBuilder, error) {
 					keys.Add(string(e.Key))
 				}
 			}
-			n := wyhash.Sum64(0, e.Key) & level0Mask
+			n := farm.Hash64WithSeed(e.Key, 0) & level0Mask
 			sparseBuckets[n] = append(sparseBuckets[n], uint32(i))
 			offsets[i] = e.PackedOffset()
 			i++
@@ -161,7 +161,7 @@ func buildInMemory(it datafile.Iter) (*inMemoryBuilder, error) {
 			if err != nil {
 				return nil, err
 			}
-			n := uint32(wyhash.Sum64(seed, key) & level1Mask)
+			n := uint32(farm.Hash64WithSeed(key, seed) & level1Mask)
 			if occ.IsSet(int64(n)) {
 				for _, n := range tmpOcc {
 					occ.Clear(int64(n))
@@ -192,9 +192,9 @@ func (t *inMemoryBuilder) MaybeLookupString(s string) datafile.PackedOffset {
 
 // MaybeLookup searches for b in t and returns its potential index.
 func (t *inMemoryBuilder) MaybeLookup(b []byte) datafile.PackedOffset {
-	i0 := wyhash.Sum64(0, b) & t.level0Mask
+	i0 := farm.Hash64WithSeed(b, 0) & t.level0Mask
 	seed := uint64(t.level0[i0])
-	i1 := wyhash.Sum64(seed, b) & t.level1Mask
+	i1 := farm.Hash64WithSeed(b, seed) & t.level1Mask
 	return t.level1[i1]
 }
 
