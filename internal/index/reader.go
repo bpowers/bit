@@ -12,7 +12,7 @@ import (
 	"math/bits"
 	"syscall"
 
-	"github.com/dgryski/go-farm"
+	"github.com/bpowers/go-rapidhash"
 	"golang.org/x/sys/unix"
 
 	"github.com/bpowers/bit/internal/datafile"
@@ -96,12 +96,12 @@ func (t *Table) MaybeLookupString(s string) datafile.PackedOffset {
 func (t *Table) MaybeLookup(b []byte) datafile.PackedOffset {
 	// first we hash the key with a fixed seed, giving us the offset
 	// of a seed that perfectly hashes into our second-level table
-	seed := t.seeds.Get(farm.Hash64WithSeed(b, 0) & t.seedsMask)
+	seed := t.seeds.Get(rapidhash.HashMicro(b, 0) & t.seedsMask)
 	// next, we use that more-specific seed to re-hash the key, giving
 	// us the offset into our array of 'values' (which in this case
 	// are 64-bit indexes into the datafile, where the variable-sized
 	// value actually lives).
-	off := t.offsets.Get(farm.Hash64WithSeed(b, uint64(seed)) & t.offsetsMask)
+	off := t.offsets.Get(rapidhash.HashMicro(b, uint64(seed)) & t.offsetsMask)
 
 	return datafile.PackedOffset(off)
 }

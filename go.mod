@@ -1,10 +1,10 @@
 module github.com/bpowers/bit
 
-go 1.19
+go 1.25
 
 require (
-	github.com/dgryski/go-farm v0.0.0-20200201041132-a6ae2369ad13
-	github.com/stretchr/testify v1.7.0
+	github.com/bpowers/go-rapidhash v0.0.0-20251104070801-bce48695b4a5
+	github.com/stretchr/testify v1.11.1
 	golang.org/x/sys v0.0.0-20220928140112-f11e5e49a4ec
 )
 
