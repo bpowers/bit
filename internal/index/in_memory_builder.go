@@ -5,7 +5,6 @@
 package index
 
 import (
-	"bytes"
 	"encoding/binary"
 	"errors"
 	"fmt"
@@ -200,29 +199,26 @@ func (t *inMemoryBuilder) MaybeLookup(b []byte) datafile.PackedOffset {
 
 // Write writes the table out to the given file
 func (t *inMemoryBuilder) Write(logger *slog.Logger) (Built, error) {
-	var buf bytes.Buffer
-
 	tbl := Built{
 		Level0Len: uint64(len(t.level0)),
 		Level1Len: uint64(len(t.level1)),
 	}
 
+	expectedSize := len(t.level1)*8 + len(t.level0)*4
+	buf := make([]byte, 0, expectedSize)
+
 	// write offsets first, which has stricter alignment requirements
 	logger.Info("writing level 1")
 	for _, i := range t.level1 {
-		if err := binary.Write(&buf, binary.LittleEndian, i); err != nil {
-			return Built{}, err
-		}
+		buf = binary.LittleEndian.AppendUint64(buf, uint64(i))
 	}
 
 	logger.Info("writing level 0")
 	for _, i := range t.level0 {
-		if err := binary.Write(&buf, binary.LittleEndian, i); err != nil {
-			return Built{}, err
-		}
+		buf = binary.LittleEndian.AppendUint32(buf, i)
 	}
 
-	tbl.Table = buf.Bytes()
+	tbl.Table = buf
 
 	return tbl, nil
 }
