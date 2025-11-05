@@ -5,7 +5,6 @@
 package unsafestring
 
 import (
-	"reflect"
 	"unsafe"
 )
 
@@ -16,11 +15,6 @@ import (
 // implies).
 //
 // SAFETY: the returned byte slice MUST NOT be written to, only read.
-func ToBytes(s string) (b []byte) {
-	bh := (*reflect.SliceHeader)(unsafe.Pointer(&b))
-	sh := *(*reflect.StringHeader)(unsafe.Pointer(&s))
-	bh.Data = sh.Data
-	bh.Len = sh.Len
-	bh.Cap = sh.Len
-	return b
+func ToBytes(s string) []byte {
+	return unsafe.Slice(unsafe.StringData(s), len(s))
 }
