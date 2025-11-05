@@ -81,7 +81,7 @@ func New(dataPath string, opts ...Option) (*Table, error) {
 		Table:     indexBytes,
 	})
 	if err != nil {
-		return nil, fmt.Errorf("index.NewTable: %e", err)
+		return nil, fmt.Errorf("index.NewTable: %w", err)
 	}
 	tbl.idx = idx
 

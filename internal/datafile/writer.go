@@ -120,15 +120,15 @@ func (w *Writer) Write(key, value []byte) (off uint64, err error) {
 
 	headerWritten, err := w.writeRecordHeader(key, value)
 	if err != nil {
-		return 0, fmt.Errorf("bufio.Write 1: %e", err)
+		return 0, fmt.Errorf("bufio.Write 1: %w", err)
 	}
 	keyWritten, err := w.w.Write(key)
 	if err != nil {
-		return 0, fmt.Errorf("bufio.Write 2: %e", err)
+		return 0, fmt.Errorf("bufio.Write 2: %w", err)
 	}
 	valueWritten, err := w.w.Write(value)
 	if err != nil {
-		return 0, fmt.Errorf("bufio.Write 3: %e", err)
+		return 0, fmt.Errorf("bufio.Write 3: %w", err)
 	}
 
 	recordLen := uint64(headerWritten + keyWritten + valueWritten)
