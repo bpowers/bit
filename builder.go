@@ -7,6 +7,8 @@ package bit
 import (
 	"errors"
 	"fmt"
+	"io"
+	"log/slog"
 	"os"
 	"path/filepath"
 
@@ -18,16 +20,37 @@ var (
 	errKeyTooBig = errors.New("we only support keys < 256 bytes in length")
 )
 
+// BuilderOption configures the Builder.
+type BuilderOption func(*builderOptions)
+
+type builderOptions struct {
+	logger *slog.Logger
+}
+
+// WithBuilderLogger sets an optional logger for the builder to use for progress updates.
+// If not provided, no logging output will be produced.
+func WithBuilderLogger(logger *slog.Logger) BuilderOption {
+	return func(opts *builderOptions) {
+		opts.logger = logger
+	}
+}
+
 // Builder is used to construct a big immutable table from key/value pairs.
 type Builder struct {
 	resultPath string
 	dataFile   *os.File
 	dioWriter  *datafile.Writer
+	logger     *slog.Logger
 }
 
 // NewBuilder creates a Builder that can be used to construct a Table.  Building should happen
 // once, and the table
-func NewBuilder(dataFilePath string) (*Builder, error) {
+func NewBuilder(dataFilePath string, opts ...BuilderOption) (*Builder, error) {
+	var options builderOptions
+	options.logger = slog.New(slog.NewTextHandler(io.Discard, nil))
+	for _, opt := range opts {
+		opt(&options)
+	}
 	// we want to write to a new file and do an atomic rename when we're done on disk
 	dataFilePath, err := filepath.Abs(dataFilePath)
 	if err != nil {
@@ -46,6 +69,7 @@ func NewBuilder(dataFilePath string) (*Builder, error) {
 		resultPath: dataFilePath,
 		dataFile:   dataFile,
 		dioWriter:  w,
+		logger:     options.logger,
 	}, nil
 }
 
@@ -72,7 +96,7 @@ func (b *Builder) finalize() error {
 		return fmt.Errorf("recordio.Close: %w", err)
 	}
 
-	if err := appendIndexFor(b.dataFile, b.dioWriter); err != nil {
+	if err := appendIndexFor(b.dataFile, b.dioWriter, b.logger); err != nil {
 		return fmt.Errorf("appendIndexFor: %w\n", err)
 	}
 
@@ -93,7 +117,7 @@ func (b *Builder) finalize() error {
 	return nil
 }
 
-func appendIndexFor(f *os.File, dioWriter *datafile.Writer) error {
+func appendIndexFor(f *os.File, dioWriter *datafile.Writer, logger *slog.Logger) error {
 	dataPath := f.Name()
 	r, err := datafile.NewMMapReaderWithPath(dataPath)
 	if err != nil {
@@ -102,7 +126,7 @@ func appendIndexFor(f *os.File, dioWriter *datafile.Writer) error {
 
 	it := r.Iter()
 	defer it.Close()
-	if built, err := index.Build(it); err != nil {
+	if built, err := index.Build(it, logger); err != nil {
 		_ = f.Close()
 		_ = os.Remove(f.Name())
 		return fmt.Errorf("idx.Build: %w", err)

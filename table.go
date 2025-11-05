@@ -10,7 +10,8 @@ import (
 	"bytes"
 	"errors"
 	"fmt"
-	"log"
+	"io"
+	"log/slog"
 
 	"github.com/bpowers/bit/internal/datafile"
 	"github.com/bpowers/bit/internal/index"
@@ -25,8 +26,17 @@ func WithMMap(enabled bool) func(opts *options) {
 	}
 }
 
+// WithLogger sets an optional logger for the table to use for diagnostic messages.
+// If not provided, no logging output will be produced.
+func WithLogger(logger *slog.Logger) func(opts *options) {
+	return func(opts *options) {
+		opts.logger = logger
+	}
+}
+
 type options struct {
 	withMmap bool
+	logger   *slog.Logger
 }
 
 // Option configures the table returned by New.
@@ -42,11 +52,13 @@ type Table struct {
 	data     *datafile.MmapReader
 	slowData *datafile.OsFileReader
 	idx      *index.Table
+	logger   *slog.Logger
 }
 
 // New opens a bit table for reading, returning an error if things go wrong.
 func New(dataPath string, opts ...Option) (*Table, error) {
 	var options options
+	options.logger = slog.New(slog.NewTextHandler(io.Discard, nil))
 	for _, opt := range opts {
 		opt(&options)
 	}
@@ -79,11 +91,12 @@ func New(dataPath string, opts ...Option) (*Table, error) {
 		Level0Len: level0Count,
 		Level1Len: level1Count,
 		Table:     indexBytes,
-	})
+	}, options.logger)
 	if err != nil {
 		return nil, fmt.Errorf("index.NewTable: %w", err)
 	}
 	tbl.idx = idx
+	tbl.logger = options.logger
 
 	return tbl, nil
 }
@@ -103,8 +116,9 @@ func (t *Table) GetString(key string) ([]byte, bool) {
 	}
 	if err != nil {
 		if errors.Is(err, datafile.InvalidOffset) {
-			// TODO: remove this before deploying to prod probably
-			log.Printf("bit.Table.GetString(%q): %s\n", key, err)
+			t.logger.Warn("invalid offset for key",
+				"key", key,
+				"error", err)
 		}
 		return nil, false
 	}
@@ -131,8 +145,9 @@ func (t *Table) Get(key []byte) ([]byte, bool) {
 	}
 	if err != nil {
 		if errors.Is(err, datafile.InvalidOffset) {
-			// TODO: remove this before deploying to prod probably
-			log.Printf("bit.Table.Get(%q): %s\n", key, err)
+			t.logger.Warn("invalid offset for key",
+				"key", string(key),
+				"error", err)
 		}
 		return nil, false
 	}

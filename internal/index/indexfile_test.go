@@ -8,6 +8,8 @@ import (
 	"bufio"
 	"context"
 	"errors"
+	"io"
+	"log/slog"
 	"os"
 	"strconv"
 	"sync"
@@ -18,6 +20,8 @@ import (
 
 	"github.com/bpowers/bit/internal/datafile"
 )
+
+var discardLogger = slog.New(slog.NewTextHandler(io.Discard, nil))
 
 type testEntry struct {
 	Key    string
@@ -124,7 +128,7 @@ func TestCatchDuplicateKeys(t *testing.T) {
 	}
 	it := &testIter{items: entries}
 	defer it.Close()
-	_, err := Build(it)
+	_, err := Build(it, discardLogger)
 	require.Error(t, err)
 	assert.Equal(t, `duplicate key: "c"`, err.Error())
 }
@@ -157,11 +161,11 @@ func testTable(t *testing.T, keys []string, extra []string) {
 	}
 	it := &testIter{items: entries}
 	defer it.Close()
-	tbl, err := Build(it)
+	tbl, err := Build(it, discardLogger)
 	if err != nil {
 		panic(err)
 	}
-	table, err := NewTable(tbl)
+	table, err := NewTable(tbl, discardLogger)
 	if err != nil {
 		panic(err)
 	}
@@ -190,7 +194,7 @@ func BenchmarkMemoryBasedBuild(b *testing.B) {
 	var tbl Built
 	for i := 0; i < b.N; i++ {
 		var err error
-		if tbl, err = Build(&testIter{items: words}); err != nil {
+		if tbl, err = Build(&testIter{items: words}, discardLogger); err != nil {
 			panic(err)
 		}
 	}
@@ -264,16 +268,16 @@ func loadBenchTable() {
 		it := &testIter{items: words}
 		defer it.Close()
 		var err error
-		benchTable, err = buildInMemory(it)
+		benchTable, err = buildInMemory(it, discardLogger)
 		if err != nil {
 			panic(err)
 		}
 
-		tbl, err := benchTable.Write()
+		tbl, err := benchTable.Write(discardLogger)
 		if err != nil {
 			panic(err)
 		}
-		benchFlatTable, err = NewTable(tbl)
+		benchFlatTable, err = NewTable(tbl, discardLogger)
 		if err != nil {
 			panic(err)
 		}

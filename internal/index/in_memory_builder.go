@@ -9,7 +9,7 @@ import (
 	"encoding/binary"
 	"errors"
 	"fmt"
-	"log"
+	"log/slog"
 	"sort"
 
 	"github.com/bpowers/go-rapidhash"
@@ -40,17 +40,17 @@ type Built struct {
 
 // Build builds a inMemoryBuilder from keys using the "Hash, displace, and compress"
 // algorithm described in http://cmph.sourceforge.net/papers/esa09.pdf.
-func Build(it datafile.Iter) (Built, error) {
+func Build(it datafile.Iter, logger *slog.Logger) (Built, error) {
 	if it.Len() > maxIndexEntries {
 		return Built{}, fmt.Errorf("too many elements -- we only support %d items in a bit index (%d asked for)", maxIndexEntries, it.Len())
 	}
 
-	t, err := buildInMemory(it)
+	t, err := buildInMemory(it, logger)
 	if err != nil {
 		return Built{}, err
 	}
 
-	return t.Write()
+	return t.Write(logger)
 }
 
 type Bucket struct {
@@ -76,7 +76,7 @@ type inMemoryBuilder struct {
 
 // buildInMemory builds a inMemoryBuilder from keys using the "Hash, displace, and compress"
 // algorithm described in http://cmph.sourceforge.net/papers/esa09.pdf.
-func buildInMemory(it datafile.Iter) (*inMemoryBuilder, error) {
+func buildInMemory(it datafile.Iter, logger *slog.Logger) (*inMemoryBuilder, error) {
 	var (
 		entryLen  = it.Len()
 		level0Len = nextPow2(entryLen / 4)
@@ -103,7 +103,7 @@ func buildInMemory(it datafile.Iter) (*inMemoryBuilder, error) {
 	// so only do it if asked.
 	keys := make(set[string], entryLen)
 
-	log.Printf("building sparse buckets\n")
+	logger.Info("building sparse buckets", "entry_count", entryLen, "level0_len", level0Len)
 
 	{
 		i := 0
@@ -125,7 +125,7 @@ func buildInMemory(it datafile.Iter) (*inMemoryBuilder, error) {
 	// done with keys, so we can free them here
 	keys = nil
 
-	log.Printf("collating sparse buckets\n")
+	logger.Info("collating sparse buckets")
 
 	var buckets []Bucket
 	for n, vals := range sparseBuckets {
@@ -137,18 +137,18 @@ func buildInMemory(it datafile.Iter) (*inMemoryBuilder, error) {
 	// done with sparseBuckets, so free it too
 	sparseBuckets = nil
 
-	log.Printf("sorting sparse buckets\n")
+	logger.Info("sorting sparse buckets")
 	sort.Sort(bySize(buckets))
-	log.Printf("done sorting sparse buckets\n")
+	logger.Info("done sorting sparse buckets")
 
 	level1 := make([]datafile.PackedOffset, level1Len)
 
-	log.Printf("iterating over %d buckets\n", len(buckets))
+	logger.Info("iterating over buckets", "bucket_count", len(buckets))
 	occ := bitset.New(int64(len(level1)))
 	var tmpOcc []uint32
 	for j, bucket := range buckets {
 		if j%1000000 == 0 {
-			log.Printf("at bucket %d\n", j)
+			logger.Info("bucket progress", "current", j, "total", len(buckets))
 		}
 		seed := uint64(1)
 	trySeed:
@@ -199,7 +199,7 @@ func (t *inMemoryBuilder) MaybeLookup(b []byte) datafile.PackedOffset {
 }
 
 // Write writes the table out to the given file
-func (t *inMemoryBuilder) Write() (Built, error) {
+func (t *inMemoryBuilder) Write(logger *slog.Logger) (Built, error) {
 	var buf bytes.Buffer
 
 	tbl := Built{
@@ -208,14 +208,14 @@ func (t *inMemoryBuilder) Write() (Built, error) {
 	}
 
 	// write offsets first, which has stricter alignment requirements
-	log.Printf("writing level 1\n")
+	logger.Info("writing level 1")
 	for _, i := range t.level1 {
 		if err := binary.Write(&buf, binary.LittleEndian, i); err != nil {
 			return Built{}, err
 		}
 	}
 
-	log.Printf("writing level 0\n")
+	logger.Info("writing level 0")
 	for _, i := range t.level0 {
 		if err := binary.Write(&buf, binary.LittleEndian, i); err != nil {
 			return Built{}, err

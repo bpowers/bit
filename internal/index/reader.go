@@ -8,7 +8,7 @@ import (
 	"encoding/binary"
 	"errors"
 	"fmt"
-	"log"
+	"log/slog"
 	"math/bits"
 	"syscall"
 
@@ -54,18 +54,18 @@ type Table struct {
 }
 
 // NewTable returns a new `*index.Table` based on the on-disk table at `path`.
-func NewTable(tbl Built) (*Table, error) {
+func NewTable(tbl Built, logger *slog.Logger) (*Table, error) {
 	m := tbl.Table
 
 	if err := unix.Madvise(m, syscall.MADV_RANDOM); err != nil {
 		return nil, fmt.Errorf("madvise: %s", err)
 	}
 
-	log.Printf("mlocking the index into memory\n")
+	logger.Info("mlocking the index into memory")
 	if err := unix.Mlock(m); err != nil {
-		log.Printf("failed to mlock the index, continuing anyway: %s\n", err)
+		logger.Warn("failed to mlock the index, continuing anyway", "error", err)
 	} else {
-		log.Printf("finished mlocking the index into memory\n")
+		logger.Info("finished mlocking the index into memory")
 	}
 
 	level0Len := tbl.Level0Len
