@@ -100,14 +100,9 @@ func (b *Builder) finalize() error {
 		return fmt.Errorf("appendIndexFor: %w\n", err)
 	}
 
-	// make the file read-only
-	if err := os.Chmod(b.dataFile.Name(), 0444); err != nil {
-		return fmt.Errorf("os.Chmod(0444): %w", err)
-	}
 	if err := os.Rename(b.dataFile.Name(), b.resultPath); err != nil {
 		return fmt.Errorf("os.Rename: %w", err)
 	}
-	// make the file read-only
 	if err := os.Chmod(b.resultPath, 0444); err != nil {
 		return fmt.Errorf("os.Chmod(0444): %w", err)
 	}
