@@ -1,5 +1,5 @@
-github.com/bpowers/go-rapidhash v0.0.0-20251104070801-bce48695b4a5 h1:Nnn/fLKUhBivP3CYYodjzMmvWQAhxsykxA9FpnRMNKk=
-github.com/bpowers/go-rapidhash v0.0.0-20251104070801-bce48695b4a5/go.mod h1:nfzJFscz0Tn6yOaJbLNMvWg3CWQr9xkF1Cy0KojYs3k=
+github.com/bpowers/go-rapidhash v0.0.0-20251104151019-7900cb144f83 h1:H7VbPefiW9jBW7m9WTxPDhHYYqEZneJbCF9/lI7i0y0=
+github.com/bpowers/go-rapidhash v0.0.0-20251104151019-7900cb144f83/go.mod h1:nfzJFscz0Tn6yOaJbLNMvWg3CWQr9xkF1Cy0KojYs3k=
 github.com/davecgh/go-spew v1.1.1 h1:vj9j/u1bqnvCEfJOwUhtlOARqs3+rkHYY13jYWTU97c=
 github.com/davecgh/go-spew v1.1.1/go.mod h1:J7Y8YcW2NihsgmVo/mv3lAwl/skON4iLHjSsI+c5H38=
 github.com/pmezard/go-difflib v1.0.0 h1:4DBwDE0NGyQoBHbLQYPwSUPoCMWR5BEzIk/f1lZbAQM=

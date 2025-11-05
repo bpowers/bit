@@ -3,7 +3,7 @@ module github.com/bpowers/bit
 go 1.25
 
 require (
-	github.com/bpowers/go-rapidhash v0.0.0-20251104070801-bce48695b4a5
+	github.com/bpowers/go-rapidhash v0.0.0-20251104151019-7900cb144f83
 	github.com/stretchr/testify v1.11.1
 	golang.org/x/sys v0.0.0-20220928140112-f11e5e49a4ec
 )

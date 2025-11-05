@@ -100,7 +100,7 @@ func (w *Writer) writeRecordHeader(key, value []byte) (int, error) {
 
 	var header [recordHeaderSize]byte
 
-	checksum := uint32(rapidhash.HashMicro(value, 0))
+	checksum := uint32(rapidhash.HashNano(value, 0))
 	binary.LittleEndian.PutUint32(header[:4], checksum)
 	header[headerKeyLenOff] = uint8(len(key))
 	binary.LittleEndian.PutUint16(header[headerValueLenOff:headerValueLenOff+2], uint16(len(value)))

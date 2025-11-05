@@ -114,7 +114,7 @@ func buildInMemory(it datafile.Iter, logger *slog.Logger) (*inMemoryBuilder, err
 					keys.Add(string(e.Key))
 				}
 			}
-			n := rapidhash.HashMicro(e.Key, 0) & level0Mask
+			n := rapidhash.HashNano(e.Key, 0) & level0Mask
 			sparseBuckets[n] = append(sparseBuckets[n], uint32(i))
 			offsets[i] = e.PackedOffset()
 			i++
@@ -160,7 +160,7 @@ func buildInMemory(it datafile.Iter, logger *slog.Logger) (*inMemoryBuilder, err
 			if err != nil {
 				return nil, err
 			}
-			n := uint32(rapidhash.HashMicro(key, seed) & level1Mask)
+			n := uint32(rapidhash.HashNano(key, seed) & level1Mask)
 			if occ.IsSet(int64(n)) {
 				for _, n := range tmpOcc {
 					occ.Clear(int64(n))
@@ -191,9 +191,9 @@ func (t *inMemoryBuilder) MaybeLookupString(s string) datafile.PackedOffset {
 
 // MaybeLookup searches for b in t and returns its potential index.
 func (t *inMemoryBuilder) MaybeLookup(b []byte) datafile.PackedOffset {
-	i0 := rapidhash.HashMicro(b, 0) & t.level0Mask
+	i0 := rapidhash.HashNano(b, 0) & t.level0Mask
 	seed := uint64(t.level0[i0])
-	i1 := rapidhash.HashMicro(b, seed) & t.level1Mask
+	i1 := rapidhash.HashNano(b, seed) & t.level1Mask
 	return t.level1[i1]
 }
 
